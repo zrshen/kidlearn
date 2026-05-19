@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local config
+.env
+.DS_Store
+.claude/
+
+# Generated flashcard images (keep directory marker)
+server/generated/*.png
+!server/generated/.gitkeep
+
+web/node_modules/
+web/.next/
+web/playwright-report/
+web/test-results/

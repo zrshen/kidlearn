@@ -1,0 +1,10 @@
+{
+  "items": [
+    {"word": "tiger", "sentence": "A tiger roars loud."},
+    {"word": "zebra", "sentence": "Zebras have stripes."},
+    {"word": "giraffe", "sentence": "A giraffe is tall."},
+    {"word": "fox", "sentence": "The fox runs fast."},
+    {"word": "panda", "sentence": "A panda eats bamboo."},
+    {"word": "owl", "sentence": "An owl hoots at night."}
+  ]
+}
