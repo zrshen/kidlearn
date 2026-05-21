@@ -2,8 +2,16 @@
 
 A small tool for making printable Kindergarten flashcard worksheets. Pick a topic
 (or let it suggest one), and the backend builds a 3×2 grid of illustrated cards
-using OpenAI's image model. Each card has a word, a kid-friendly illustration,
-and a short sentence with the target word highlighted.
+using OpenAI's `gpt-image-2` image model. Each card has a word, a kid-friendly
+illustration, and a short sentence with the target word highlighted.
+
+Three OpenAI models are used:
+
+| Model | Purpose |
+|---|---|
+| `gpt-image-2` | Renders the 1536×1024 worksheet PNG |
+| `gpt-5.4` | Suggests 6 K-level (word, sentence) pairs from a topic |
+| `gpt-5.4` (vision) | Backfills metadata for older PNGs without a sidecar JSON |
 
 ![Flashcard generator UI](docs/assets/screenshot.png)
 
