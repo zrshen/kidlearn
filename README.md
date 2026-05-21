@@ -10,7 +10,7 @@ Two OpenAI models are used:
 | Model | Purpose |
 |---|---|
 | `gpt-image-2` | Renders the 1536×1024 worksheet PNG |
-| `gpt-5.4` | Suggests 6 K-level (word, sentence) pairs from a topic |
+| `gpt-5.5` | Suggests 6 K-level (word, sentence) pairs from a topic |
 
 ![Flashcard generator UI](docs/assets/screenshot.png)
 

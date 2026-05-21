@@ -170,7 +170,7 @@ def delete_generated(filenames: list[str]) -> dict:
     return {"deleted": deleted, "released_words": sorted(words_to_release)}
 
 
-SUGGEST_MODEL = "gpt-5.4"
+SUGGEST_MODEL = "gpt-5.5"
 SUGGEST_REASONING_EFFORT = "low"
 SUGGEST_MAX_RETRIES = 3
 
@@ -285,7 +285,7 @@ def read_sidecar_words(png_path: Path) -> list[str]:
     return [str(w).strip().lower() for w in data.get("words", []) if str(w).strip()]
 
 
-VISION_MODEL = "gpt-5.4"
+VISION_MODEL = "gpt-5.5"
 
 
 def extract_words_from_image(png_path: Path) -> list[str]:

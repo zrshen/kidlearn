@@ -309,7 +309,7 @@ export default function Page() {
               ? `backend ready · ${usedWords.length} words in library`
               : "connecting…"}
           </span>
-          <span>v1.0 · gpt-image-2 · gpt-5.4</span>
+          <span>v1.0 · gpt-image-2 · gpt-5.5</span>
         </div>
 
         <div className="mt-10">
