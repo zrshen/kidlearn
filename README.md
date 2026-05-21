@@ -22,7 +22,9 @@ and a short sentence with the target word highlighted.
 - **Archive sidebar** — every previously generated worksheet, grouped by day,
   searchable by any of its six words. Multi-select to delete (which releases the
   words back to the library).
-- **Print-ready** — landscape letter, fills the page, single sheet.
+- **Print-ready** — each worksheet fits a single US Letter page (landscape,
+  0.25" margins, `object-fit: contain`) so the browser print dialog produces
+  exactly one sheet per worksheet.
 
 ## Quickstart
 
