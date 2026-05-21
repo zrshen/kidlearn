@@ -29,9 +29,33 @@ def find_conflicts(new_words: Iterable[str], used: set[str]) -> list[str]:
     return sorted(set(new_words) & used)
 
 
+def _normalize_words(raw: Iterable) -> list[str]:
+    return [str(w).strip().lower() for w in raw if str(w).strip()]
+
+
+def _sidecar_path(png_path: Path) -> Path:
+    return png_path.with_suffix(".json")
+
+
+def read_sidecar_words(png_path: Path) -> list[str]:
+    sidecar = _sidecar_path(png_path)
+    if not sidecar.is_file():
+        return []
+    try:
+        data = json.loads(sidecar.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    return _normalize_words(data.get("words", []))
+
+
+def write_sidecar(png_path: Path, words: list[str]) -> None:
+    _sidecar_path(png_path).write_text(json.dumps({"words": words}) + "\n")
+
+
 import base64
 import fcntl
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 
 from openai import OpenAI
@@ -142,7 +166,7 @@ def generate_and_record(items: list[WordSentence], quality: Quality = "medium") 
         png_bytes = _produce_png_bytes(items, quality=quality)
         out_path = GENERATED_DIR / f"image-{items[0]['word']}.png"
         out_path.write_bytes(png_bytes)
-        out_path.with_suffix(".json").write_text(json.dumps({"words": new_words}) + "\n")
+        write_sidecar(out_path, new_words)
         save_used_words(used | set(new_words))
     return out_path
 
@@ -155,14 +179,8 @@ def delete_generated(filenames: list[str]) -> dict:
             png = GENERATED_DIR / name
             if not png.is_file() or png.suffix != ".png" or not name.startswith("image-"):
                 continue
-            sidecar = png.with_suffix(".json")
-            if sidecar.is_file():
-                try:
-                    meta = json.loads(sidecar.read_text())
-                    words_to_release.update(w.lower() for w in meta.get("words", []))
-                except (json.JSONDecodeError, OSError):
-                    pass
-                sidecar.unlink(missing_ok=True)
+            words_to_release.update(read_sidecar_words(png))
+            _sidecar_path(png).unlink(missing_ok=True)
             png.unlink(missing_ok=True)
             deleted.append(name)
         if words_to_release:
@@ -274,17 +292,6 @@ def suggest_items(used: set[str], topic: str | None) -> list[WordSentence]:
     raise SuggestionError(last_reason)
 
 
-def read_sidecar_words(png_path: Path) -> list[str]:
-    sidecar = png_path.with_suffix(".json")
-    if not sidecar.is_file():
-        return []
-    try:
-        data = json.loads(sidecar.read_text())
-    except (json.JSONDecodeError, OSError):
-        return []
-    return [str(w).strip().lower() for w in data.get("words", []) if str(w).strip()]
-
-
 VISION_MODEL = "gpt-5.5"
 
 
@@ -321,28 +328,32 @@ def extract_words_from_image(png_path: Path) -> list[str]:
 
 
 def _parse_extract_response(content: str) -> list[str]:
-    data = json.loads(content)
-    raw = data.get("words", [])
-    return [str(w).strip().lower() for w in raw if str(w).strip()]
+    return _normalize_words(json.loads(content).get("words", []))
+
+
+BACKFILL_MAX_WORKERS = 8
 
 
 def backfill_missing_sidecars() -> dict:
+    targets = [p for p in GENERATED_DIR.glob("image-*.png") if not _sidecar_path(p).is_file()]
     backfilled: list[dict] = []
     failed: list[str] = []
-    for png in GENERATED_DIR.glob("image-*.png"):
-        sidecar = png.with_suffix(".json")
-        if sidecar.is_file():
-            continue
-        try:
-            words = extract_words_from_image(png)
-        except Exception as e:
-            failed.append(f"{png.name}: {e}")
-            continue
-        if not words:
-            failed.append(f"{png.name}: empty extraction")
-            continue
-        sidecar.write_text(json.dumps({"words": words}) + "\n")
-        backfilled.append({"filename": png.name, "words": words})
+    if not targets:
+        return {"backfilled": backfilled, "failed": failed}
+    with ThreadPoolExecutor(max_workers=min(BACKFILL_MAX_WORKERS, len(targets))) as pool:
+        future_to_png = {pool.submit(extract_words_from_image, p): p for p in targets}
+        for future in as_completed(future_to_png):
+            png = future_to_png[future]
+            try:
+                words = future.result()
+            except Exception as e:
+                failed.append(f"{png.name}: {e}")
+                continue
+            if not words:
+                failed.append(f"{png.name}: empty extraction")
+                continue
+            write_sidecar(png, words)
+            backfilled.append({"filename": png.name, "words": words})
     return {"backfilled": backfilled, "failed": failed}
 
 

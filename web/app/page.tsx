@@ -292,7 +292,7 @@ export default function Page() {
 
         {banner.kind !== "none" && (
           <div className="mb-5">
-            <ErrorBanner {...bannerToProps(banner)} />
+            <ErrorBanner {...banner} />
           </div>
         )}
 
@@ -391,9 +391,3 @@ function formatElapsed(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function bannerToProps(b: Banner) {
-  if (b.kind === "none") return { kind: "none" as const };
-  if (b.kind === "conflict")
-    return { kind: "conflict" as const, conflicts: b.conflicts };
-  return { kind: "error" as const, message: b.message };
-}
