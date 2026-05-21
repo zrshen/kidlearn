@@ -14,9 +14,13 @@ wheels/
 .DS_Store
 .claude/
 
-# Generated flashcard images (keep directory marker)
+# Generated flashcard images and metadata (keep directory marker)
 server/generated/*.png
+server/generated/*.json
 !server/generated/.gitkeep
+
+# Local design exploration mockups
+web/mockups/
 
 web/node_modules/
 web/.next/
