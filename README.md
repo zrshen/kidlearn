@@ -36,19 +36,15 @@ Two OpenAI models are used:
 ## Quickstart
 
 ```bash
-# Backend deps
-uv sync
-
-# Frontend deps
-cd web && npm install && cd ..
-
-# Set your OpenAI key
-echo "OPENAI_API_KEY=sk-..." > .env
-
-# Two terminals:
-uv run uvicorn server.main:app --reload --port 8000   # backend
-cd web && npm run dev                                  # frontend → http://localhost:3000
+make install                          # backend + frontend deps
+echo "OPENAI_API_KEY=sk-..." > .env   # your OpenAI key
+make dev                              # starts backend + frontend, Ctrl+C stops both
 ```
+
+Then open http://localhost:3000.
+
+Other useful targets: `make backend`, `make frontend`, `make stop`, `make test`,
+`make e2e`. Run `make help` for the full list.
 
 ## Architecture
 
