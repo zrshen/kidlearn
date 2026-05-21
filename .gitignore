@@ -22,6 +22,9 @@ server/generated/*.json
 # Local design exploration mockups
 web/mockups/
 
+# Local process docs (specs, plans)
+docs/superpowers/
+
 web/node_modules/
 web/.next/
 web/playwright-report/
