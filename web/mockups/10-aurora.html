@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flashcard Generator — Aurora Glass</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@100..900&family=Geist+Mono:wght@300..700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --glass-bg: rgba(255,255,255,0.55);
+    --glass-border: rgba(255,255,255,0.6);
+    --glass-shadow: 0 8px 32px rgba(60,40,120,0.12), 0 1px 1px rgba(255,255,255,0.5) inset;
+    --ink: #1a1a2e;
+    --ink-soft: #4a4a6a;
+    --ink-faint: #8a8aa8;
+    --accent: #7c3aed;
+    --accent-2: #ec4899;
+    --accent-3: #06b6d4;
+  }
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--ink);
+    font-family: "Geist", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.55;
+    background: #f0eef9;
+    overflow-x: hidden;
+    position: relative;
+  }
+  /* Aurora background */
+  body::before {
+    content: ""; position: fixed; inset: -10%;
+    background:
+      radial-gradient(60rem 40rem at 10% 0%, rgba(124,58,237,0.55), transparent 60%),
+      radial-gradient(50rem 35rem at 100% 40%, rgba(236,72,153,0.45), transparent 55%),
+      radial-gradient(45rem 30rem at 30% 100%, rgba(6,182,212,0.45), transparent 55%),
+      radial-gradient(70rem 60rem at 80% 100%, rgba(251,191,36,0.30), transparent 55%);
+    filter: blur(60px); z-index: -2;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.04; mix-blend-mode: overlay; pointer-events: none; z-index: -1;
+  }
+  .layout { display: grid; grid-template-columns: 1fr 21rem; min-height: 100vh; }
+  main { padding: 3rem 2.5rem 4rem; max-width: 58rem; margin: 0 auto; width: 100%; }
+  aside { padding: 3rem 1.75rem; }
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    box-shadow: var(--glass-shadow);
+  }
+  header { margin-bottom: 2.5rem; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    background: rgba(255,255,255,0.6);
+    border: 1px solid rgba(255,255,255,0.7);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    padding: 0.35rem 0.8rem; border-radius: 999px;
+    font-family: "Geist"; font-size: 0.72rem; font-weight: 500;
+    color: var(--ink-soft); margin-bottom: 1rem;
+  }
+  .badge .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
+  h1 {
+    font-family: "Geist"; font-weight: 500;
+    font-size: 4rem; line-height: 1.02;
+    letter-spacing: -0.04em; margin: 0;
+    color: var(--ink);
+  }
+  h1 em {
+    font-family: "Instrument Serif"; font-style: italic; font-weight: 400;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 50%, var(--accent-3) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    font-size: 4.5rem; padding-right: 0.1em;
+  }
+  .summary {
+    font-size: 1.05rem; color: var(--ink-soft); margin: 1rem 0 0;
+    max-width: 32rem; font-weight: 400;
+  }
+  .controls-row {
+    display: grid; grid-template-columns: 1.5fr 1fr; gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .panel { padding: 1.25rem 1.5rem; }
+  .field-label {
+    font-family: "Geist Mono"; font-size: 0.68rem; font-weight: 500;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--ink-faint); display: block; margin-bottom: 0.5rem;
+  }
+  .topic-input {
+    width: 100%; background: transparent; border: 0; outline: none;
+    font-family: "Instrument Serif"; font-style: italic;
+    font-size: 1.4rem; color: var(--ink); padding: 0.2rem 0;
+  }
+  .topic-input::placeholder { font-family: "Geist"; font-style: normal; color: var(--ink-faint); font-size: 1rem; }
+  .quality-row {
+    display: flex; gap: 4px; padding: 4px;
+    background: rgba(255,255,255,0.5);
+    border-radius: 999px;
+  }
+  .quality-row label {
+    flex: 1; text-align: center; padding: 0.4rem 0.8rem;
+    font-size: 0.85rem; color: var(--ink-soft);
+    cursor: pointer; border-radius: 999px;
+    transition: all 0.2s;
+  }
+  .quality-row label.on {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: white; font-weight: 500;
+    box-shadow: 0 4px 12px rgba(124,58,237,0.3);
+  }
+  .toolbar {
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    color: white; border: 0; padding: 0.7rem 1.5rem; border-radius: 999px;
+    font-family: "Geist"; font-weight: 500; font-size: 0.95rem;
+    cursor: pointer; box-shadow: 0 6px 20px rgba(124,58,237,0.3);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(124,58,237,0.4); }
+  .btn-ghost {
+    background: rgba(255,255,255,0.6); color: var(--ink);
+    border: 1px solid rgba(255,255,255,0.7); padding: 0.6rem 1.1rem;
+    border-radius: 999px; font-family: "Geist"; font-size: 0.9rem; font-weight: 500;
+    cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.85); }
+  .batch-wrap { display: flex; align-items: center; gap: 0.4rem; padding-left: 0.5rem; }
+  .batch-input {
+    width: 2.75rem; background: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 8px; text-align: center; padding: 0.35rem;
+    font-family: "Geist Mono"; font-size: 0.95rem; color: var(--ink); outline: none;
+  }
+  .batch-label { font-family: "Geist Mono"; font-size: 0.75rem; color: var(--ink-soft); }
+  .rows-card { padding: 1.5rem; }
+  ol.rows { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  ol.rows li {
+    display: grid; grid-template-columns: 2.5rem 11rem 1fr;
+    align-items: center; gap: 1rem; padding: 0.7rem 0.75rem;
+    border-radius: 14px; transition: all 0.15s;
+  }
+  ol.rows li:hover { background: rgba(255,255,255,0.4); }
+  .numeral {
+    width: 2rem; height: 2rem; border-radius: 50%;
+    background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(236,72,153,0.15));
+    color: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-family: "Instrument Serif"; font-style: italic; font-size: 1.2rem;
+    border: 1px solid rgba(124,58,237,0.2);
+  }
+  ol.rows li:nth-child(2) .numeral { background: linear-gradient(135deg, rgba(236,72,153,0.15), rgba(6,182,212,0.15)); color: var(--accent-2); border-color: rgba(236,72,153,0.2); }
+  ol.rows li:nth-child(3) .numeral { background: linear-gradient(135deg, rgba(6,182,212,0.15), rgba(251,191,36,0.15)); color: var(--accent-3); border-color: rgba(6,182,212,0.2); }
+  .field {
+    background: transparent; border: 0; outline: none;
+    font-family: "Geist"; font-size: 0.95rem; color: var(--ink); width: 100%;
+    padding: 0.4rem 0; border-bottom: 1px solid transparent;
+  }
+  .field.word { font-family: "Instrument Serif"; font-style: italic; font-size: 1.25rem; }
+  .field::placeholder { color: var(--ink-faint); font-style: normal; font-family: "Geist"; }
+  .field:focus { border-bottom-color: var(--accent); }
+  aside .glass { padding: 1.5rem 1.25rem; }
+  aside h2 {
+    font-family: "Geist"; font-weight: 500; font-size: 1.4rem;
+    letter-spacing: -0.02em; margin: 0;
+  }
+  aside .em {
+    font-family: "Instrument Serif"; font-style: italic;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  aside .count {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.8);
+    padding: 0.2rem 0.7rem; border-radius: 999px;
+    font-family: "Geist Mono"; font-size: 0.7rem; color: var(--ink-soft);
+    margin-top: 0.6rem;
+  }
+  aside input[type="search"] {
+    width: 100%; background: rgba(255,255,255,0.5);
+    border: 1px solid rgba(255,255,255,0.6); border-radius: 999px;
+    padding: 0.55rem 1rem; margin-top: 1.25rem;
+    font-family: "Geist"; font-size: 0.875rem; outline: none;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .word-section { margin-top: 1.5rem; }
+  .word-section h3 {
+    font-family: "Instrument Serif"; font-style: italic; font-size: 1.2rem;
+    margin: 0 0 0.3rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .word-section h3 .n {
+    font-family: "Geist Mono"; font-style: normal; font-size: 0.7rem;
+    color: var(--ink-faint); -webkit-text-fill-color: var(--ink-faint);
+  }
+  .word-section ul {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-wrap: wrap; gap: 0.4rem;
+  }
+  .word-section li {
+    background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.6);
+    padding: 0.15rem 0.6rem; border-radius: 999px;
+    font-size: 0.78rem; color: var(--ink-soft);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <main>
+    <header>
+      <span class="badge"><span class="dot"></span>Worksheet Studio · v1.0</span>
+      <h1>Make six words<br>feel <em>brand new</em></h1>
+      <p class="summary">A printable kindergarten worksheet, generated in seconds. Pick a topic, choose a quality, hit go.</p>
+    </header>
+
+    <div class="controls-row">
+      <div class="glass panel">
+        <label class="field-label">Topic</label>
+        <input class="topic-input" type="text" placeholder="animals, food, feelings…">
+      </div>
+      <div class="glass panel">
+        <label class="field-label">Quality</label>
+        <div class="quality-row">
+          <label>Low</label>
+          <label class="on">Medium</label>
+          <label>High</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="glass toolbar">
+      <button class="btn-primary">Suggest &amp; Generate</button>
+      <div class="batch-wrap">
+        <span class="batch-label">batch</span>
+        <input class="batch-input" value="1">
+      </div>
+      <button class="btn-ghost">Batch Generate</button>
+    </div>
+
+    <div class="glass rows-card">
+      <ol class="rows">
+        <li>
+          <span class="numeral">1</span>
+          <input class="field word" placeholder="word" value="duck">
+          <input class="field" placeholder="sentence" value="I see a duck swim.">
+        </li>
+        <li>
+          <span class="numeral">2</span>
+          <input class="field word" placeholder="word" value="cake">
+          <input class="field" placeholder="sentence" value="We eat cake today.">
+        </li>
+        <li><span class="numeral">3</span><input class="field word" placeholder="word"><input class="field" placeholder="sentence"></li>
+        <li><span class="numeral">4</span><input class="field word" placeholder="word"><input class="field" placeholder="sentence"></li>
+        <li><span class="numeral">5</span><input class="field word" placeholder="word"><input class="field" placeholder="sentence"></li>
+        <li><span class="numeral">6</span><input class="field word" placeholder="word"><input class="field" placeholder="sentence"></li>
+      </ol>
+    </div>
+  </main>
+
+  <aside>
+    <div class="glass">
+      <h2>Used <span class="em">Words</span></h2>
+      <span class="count">● 260 total</span>
+      <input type="search" placeholder="search…">
+      <div class="word-section">
+        <h3>A<span class="n">8</span></h3>
+        <ul>
+          <li>all</li><li>angry</li><li>ant</li><li>apple</li><li>are</li><li>arm</li>
+        </ul>
+      </div>
+      <div class="word-section">
+        <h3>B<span class="n">12</span></h3>
+        <ul>
+          <li>baby</li><li>bag</li><li>ball</li><li>banana</li><li>bear</li><li>bee</li><li>belt</li><li>bike</li><li>bird</li>
+        </ul>
+      </div>
+      <div class="word-section">
+        <h3>C<span class="n">8</span></h3>
+        <ul>
+          <li>cake</li><li>cat</li><li>cheese</li><li>cloud</li><li>cookie</li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

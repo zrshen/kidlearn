@@ -20,6 +20,61 @@ export async function fetchUsedWords(): Promise<string[]> {
   return j.words;
 }
 
+export type GeneratedEntry = {
+  filename: string;
+  url: string;
+  word: string;
+  words: string[];
+  hasMetadata: boolean;
+  mtime: number;
+};
+
+export async function fetchGenerated(): Promise<GeneratedEntry[]> {
+  const r = await fetch(`${API}/api/generated`);
+  if (!r.ok) throw new Error(`generated ${r.status}`);
+  const j = (await r.json()) as {
+    items: {
+      filename: string;
+      url: string;
+      word: string;
+      words: string[];
+      has_metadata: boolean;
+      mtime: number;
+    }[];
+  };
+  return j.items.map((e) => ({
+    filename: e.filename,
+    url: `${API}${e.url}`,
+    word: e.word,
+    words: e.words,
+    hasMetadata: e.has_metadata,
+    mtime: e.mtime,
+  }));
+}
+
+export type BackfillResult = {
+  backfilled: { filename: string; words: string[] }[];
+  failed: string[];
+};
+
+export async function backfillGenerated(): Promise<BackfillResult> {
+  const r = await fetch(`${API}/api/generated/backfill`, { method: "POST" });
+  if (!r.ok) throw new Error(`backfill ${r.status}`);
+  return (await r.json()) as BackfillResult;
+}
+
+export async function deleteGenerated(
+  filenames: string[],
+): Promise<{ deleted: string[]; released_words: string[] }> {
+  const r = await fetch(`${API}/api/generated/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filenames }),
+  });
+  if (!r.ok) throw new Error(`delete ${r.status}`);
+  return (await r.json()) as { deleted: string[]; released_words: string[] };
+}
+
 export async function generate(
   items: Item[],
   quality: Quality = "medium",

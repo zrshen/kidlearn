@@ -1,15 +1,23 @@
 import type { Metadata } from "next";
-import { Nunito } from "next/font/google";
+import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const nunito = Nunito({
+const interTight = Inter_Tight({
   subsets: ["latin"],
-  weight: ["400", "600", "700", "800"],
-  variable: "--font-nunito",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-sans-base",
+  display: "swap",
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-mono-base",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Flash Card Generator",
+  title: "Flashcard Generator",
   description: "Generate printable kindergarten flashcards.",
 };
 
@@ -18,7 +26,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${nunito.variable} font-sans antialiased`}>
+      <body className={`${interTight.variable} ${jetbrains.variable} font-sans antialiased`}>
         {children}
       </body>
     </html>

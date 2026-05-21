@@ -8,15 +8,15 @@ export function TopicInput({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm font-semibold text-ink">
-      Topic
+    <label className="block rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm transition-colors focus-within:border-ink-faint">
+      <span className="label-eyebrow block">Topic</span>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="e.g. animals, food, feelings"
+        placeholder="animals, food, feelings…"
         maxLength={100}
-        className="w-72 rounded-full border border-blush bg-white px-4 py-2 font-normal outline-none focus:border-accent"
+        className="mt-1.5 w-full border-0 bg-transparent p-0 text-base font-medium text-ink outline-none placeholder:font-normal placeholder:text-ink-faint"
       />
     </label>
   );

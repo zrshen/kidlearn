@@ -1,24 +1,67 @@
 @import "tailwindcss";
 
 @theme {
-  --color-cream: #fff8ec;
-  --color-blush: #ffd6e0;
-  --color-sky: #cfeaff;
-  --color-mint: #d4f1d4;
-  --color-sun: #ffe9a8;
-  --color-ink: #2a2a2a;
-  --color-ink-soft: #5a5a5a;
-  --color-accent: #ff7eb0;
-  --color-accent-strong: #e75a96;
-  --color-soft-red: #fde2e4;
-  --color-deep-red: #b3354f;
-  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --color-bg: #fafafa;
+  --color-surface: #ffffff;
+  --color-border: #ececec;
+  --color-border-strong: #d4d4d4;
+  --color-ink: #111111;
+  --color-ink-soft: #525252;
+  --color-ink-faint: #a3a3a3;
+  --color-accent: #5e5cff;
+  --color-accent-strong: #4b49d6;
+  --color-accent-soft: rgba(94, 92, 255, 0.08);
+  --color-success: #22c55e;
+  --color-danger: #dc2626;
+  --color-conflict-bg: #fff1f2;
+  --color-conflict-ink: #b91c1c;
+
+  --font-sans: var(--font-sans-base), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-base), ui-monospace, SFMono-Regular, monospace;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 body {
-  background: var(--color-cream);
+  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  letter-spacing: -0.005em;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.label-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.shadow-card-sm {
+  box-shadow: var(--shadow-sm);
+}
+
+.shadow-card-md {
+  box-shadow: var(--shadow-md);
+}
+
+.grad-title {
+  background: linear-gradient(90deg, var(--color-ink) 0%, var(--color-accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@page {
+  size: letter landscape;
+  margin: 0.25in;
 }
 
 @media print {
@@ -26,8 +69,12 @@ body {
   .print-target, .print-target * { visibility: visible; }
   .print-target {
     position: absolute;
-    inset: 0;
+    top: 0;
+    left: 0;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
+    page-break-after: avoid;
+    page-break-inside: avoid;
   }
 }

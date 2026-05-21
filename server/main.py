@@ -106,3 +106,42 @@ from fastapi.staticfiles import StaticFiles
 
 flashcard_lib.GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/generated", StaticFiles(directory=flashcard_lib.GENERATED_DIR), name="generated")
+
+
+@app.get("/api/generated")
+def list_generated() -> dict:
+    entries = []
+    for p in flashcard_lib.GENERATED_DIR.glob("image-*.png"):
+        stat = p.stat()
+        first_word = p.stem.removeprefix("image-")
+        words = flashcard_lib.read_sidecar_words(p)
+        entries.append(
+            {
+                "filename": p.name,
+                "url": f"/generated/{p.name}",
+                "word": first_word,
+                "words": words or [first_word],
+                "has_metadata": bool(words),
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+            }
+        )
+    entries.sort(key=lambda e: e["mtime"], reverse=True)
+    return {"items": entries}
+
+
+@app.post("/api/generated/backfill")
+def backfill_generated() -> dict:
+    try:
+        return flashcard_lib.backfill_missing_sidecars()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": f"backfill failed: {e}"})
+
+
+class DeleteGeneratedRequest(BaseModel):
+    filenames: Annotated[list[str], Field(min_length=1, max_length=100)]
+
+
+@app.post("/api/generated/delete")
+def delete_generated(req: DeleteGeneratedRequest) -> dict:
+    return flashcard_lib.delete_generated(req.filenames)

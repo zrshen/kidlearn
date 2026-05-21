@@ -61,34 +61,36 @@ export function BatchControls({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <label className="flex items-center gap-1 text-sm font-semibold text-ink">
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="flex items-center gap-1.5 text-ink-soft">
+        <span className="text-sm">Batches</span>
         <input
           type="number"
           min={MIN}
           max={MAX}
           value={n}
           onChange={(e) => setN(parseInt(e.target.value, 10))}
-          className="w-16 rounded-xl border border-blush bg-white px-2 py-1 text-center outline-none focus:border-accent"
+          className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent"
         />
-        <span>batches</span>
       </label>
       <button
         type="button"
         onClick={handleClick}
         disabled={busy || disabled || pendingConfirm}
-        className="rounded-full bg-mint px-5 py-2 font-bold text-ink shadow-sm transition-colors hover:bg-sun disabled:opacity-50"
+        className="rounded-md px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-soft"
       >
-        {busy ? `Generating... ${elapsedLabel ?? ""}`.trim() : "Batch Generate"}
+        {busy ? `Generating… ${elapsedLabel ?? ""}`.trim() : "Batch Generate"}
       </button>
       {pendingConfirm && (
-        <div className="flex items-center gap-2 rounded-2xl bg-sun px-3 py-2 text-sm text-ink">
-          <span>Generate {clampedN()} worksheets? Each uses one OpenAI image credit.</span>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm shadow-card-sm">
+          <span className="text-ink-soft">
+            Generate {clampedN()} worksheets? Each uses one OpenAI image credit.
+          </span>
           <button
             type="button"
             onClick={() => void doRequest()}
             disabled={busy}
-            className="rounded-full bg-accent px-3 py-1 font-bold text-white hover:bg-accent-strong"
+            className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
           >
             Confirm
           </button>
@@ -96,7 +98,7 @@ export function BatchControls({
             type="button"
             onClick={() => setPendingConfirm(false)}
             disabled={busy}
-            className="rounded-full bg-white px-3 py-1 font-semibold text-ink"
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
           >
             Cancel
           </button>

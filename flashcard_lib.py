@@ -142,8 +142,32 @@ def generate_and_record(items: list[WordSentence], quality: Quality = "medium") 
         png_bytes = _produce_png_bytes(items, quality=quality)
         out_path = GENERATED_DIR / f"image-{items[0]['word']}.png"
         out_path.write_bytes(png_bytes)
+        out_path.with_suffix(".json").write_text(json.dumps({"words": new_words}) + "\n")
         save_used_words(used | set(new_words))
     return out_path
+
+
+def delete_generated(filenames: list[str]) -> dict:
+    deleted: list[str] = []
+    words_to_release: set[str] = set()
+    with _used_words_lock():
+        for name in filenames:
+            png = GENERATED_DIR / name
+            if not png.is_file() or png.suffix != ".png" or not name.startswith("image-"):
+                continue
+            sidecar = png.with_suffix(".json")
+            if sidecar.is_file():
+                try:
+                    meta = json.loads(sidecar.read_text())
+                    words_to_release.update(w.lower() for w in meta.get("words", []))
+                except (json.JSONDecodeError, OSError):
+                    pass
+                sidecar.unlink(missing_ok=True)
+            png.unlink(missing_ok=True)
+            deleted.append(name)
+        if words_to_release:
+            save_used_words(load_used_words() - words_to_release)
+    return {"deleted": deleted, "released_words": sorted(words_to_release)}
 
 
 SUGGEST_MODEL = "gpt-5.4"
@@ -248,6 +272,78 @@ def suggest_items(used: set[str], topic: str | None) -> list[WordSentence]:
             continue
         return items
     raise SuggestionError(last_reason)
+
+
+def read_sidecar_words(png_path: Path) -> list[str]:
+    sidecar = png_path.with_suffix(".json")
+    if not sidecar.is_file():
+        return []
+    try:
+        data = json.loads(sidecar.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [str(w).strip().lower() for w in data.get("words", []) if str(w).strip()]
+
+
+VISION_MODEL = "gpt-5.4"
+
+
+def extract_words_from_image(png_path: Path) -> list[str]:
+    stub = os.environ.get("FLASHCARD_STUB_EXTRACT")
+    if stub:
+        return _parse_extract_response(Path(stub).read_text())
+    b64 = base64.b64encode(png_path.read_bytes()).decode("ascii")
+    resp = _openai_client().chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "This image is a Kindergarten flashcard worksheet with exactly 6 cards "
+                            "in a 3x2 grid. Each card has one large bold word at the top. "
+                            "Return those 6 title words in reading order (left-to-right, top-to-bottom), "
+                            "lowercased, with no punctuation. "
+                            'Respond with JSON only: {"words": ["w1","w2","w3","w4","w5","w6"]}'
+                        ),
+                    },
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                ],
+            }
+        ],
+        response_format={"type": "json_object"},
+        reasoning_effort="low",
+    )
+    content = resp.choices[0].message.content or "{}"
+    return _parse_extract_response(content)
+
+
+def _parse_extract_response(content: str) -> list[str]:
+    data = json.loads(content)
+    raw = data.get("words", [])
+    return [str(w).strip().lower() for w in raw if str(w).strip()]
+
+
+def backfill_missing_sidecars() -> dict:
+    backfilled: list[dict] = []
+    failed: list[str] = []
+    for png in GENERATED_DIR.glob("image-*.png"):
+        sidecar = png.with_suffix(".json")
+        if sidecar.is_file():
+            continue
+        try:
+            words = extract_words_from_image(png)
+        except Exception as e:
+            failed.append(f"{png.name}: {e}")
+            continue
+        if not words:
+            failed.append(f"{png.name}: empty extraction")
+            continue
+        sidecar.write_text(json.dumps({"words": words}) + "\n")
+        backfilled.append({"filename": png.name, "words": words})
+    return {"backfilled": backfilled, "failed": failed}
 
 
 class BatchEntry(TypedDict):

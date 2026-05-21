@@ -3,15 +3,20 @@ import { useEffect, useRef, useState } from "react";
 import { BatchControls } from "../components/BatchControls";
 import { BatchPreview } from "../components/BatchPreview";
 import { ErrorBanner } from "../components/ErrorBanner";
+import { HistorySidebar } from "../components/HistorySidebar";
 import { InputRows, emptyItems, type Item } from "../components/InputRows";
 import { TopicInput } from "../components/TopicInput";
 import { UsedWordsSidebar } from "../components/UsedWordsSidebar";
 import {
+  backfillGenerated,
+  deleteGenerated,
+  fetchGenerated,
   fetchUsedWords,
   generate,
   suggest,
   type Batch,
   type GenerateResult,
+  type GeneratedEntry,
   type Quality,
 } from "./api";
 
@@ -27,10 +32,12 @@ export default function Page() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [batchResults, setBatchResults] = useState<Batch[]>([]);
   const [usedWords, setUsedWords] = useState<string[]>([]);
+  const [history, setHistory] = useState<GeneratedEntry[]>([]);
   const [generating, setGenerating] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [batching, setBatching] = useState(false);
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
+  const [usedLoaded, setUsedLoaded] = useState(false);
 
   const busy = generating || suggesting || batching;
   const elapsed = useElapsedSeconds(busy);
@@ -51,13 +58,36 @@ export default function Page() {
 
   useEffect(() => {
     fetchUsedWords()
-      .then(setUsedWords)
+      .then((w) => {
+        setUsedWords(w);
+        setUsedLoaded(true);
+      })
       .catch(() => setBanner({ kind: "error", message: "Could not load used words." }));
+    fetchGenerated()
+      .then(async (entries) => {
+        setHistory(entries);
+        if (entries.some((e) => !e.hasMetadata)) {
+          try {
+            await backfillGenerated();
+            setHistory(await fetchGenerated());
+          } catch {
+            /* backfill failed; keep what we have */
+          }
+        }
+      })
+      .catch(() => {
+        /* sidebar stays empty; not a blocking error */
+      });
   }, []);
 
   async function refreshUsed() {
     try {
       setUsedWords(await fetchUsedWords());
+    } catch {
+      /* keep stale */
+    }
+    try {
+      setHistory(await fetchGenerated());
     } catch {
       /* keep stale */
     }
@@ -119,33 +149,106 @@ export default function Page() {
   const allRowsFilled = items.every(
     (it) => it.word.trim() && it.sentence.trim(),
   );
+  const hasAnyContent =
+    items.some((it) => it.word.trim() || it.sentence.trim()) ||
+    imageUrl !== null ||
+    batchResults.length > 0;
+
+  function handleClear() {
+    setItems(emptyItems());
+    setImageUrl(null);
+    setBatchResults([]);
+    setBanner({ kind: "none" });
+  }
+
   const generateLabel = suggesting
-    ? `Suggesting... ${elapsedLabel}`
+    ? `Suggesting… ${elapsedLabel}`
     : generating
-      ? `Generating... ${elapsedLabel}`
+      ? `Generating… ${elapsedLabel}`
       : allRowsFilled
         ? "Generate"
         : "Suggest & Generate";
 
   return (
-    <div className="flex min-h-screen bg-cream">
-      <main className="flex-1 space-y-5 p-6">
-        <h1 className="text-2xl font-extrabold text-ink">Flash Card Generator</h1>
+    <div className="flex min-h-screen bg-bg">
+      <HistorySidebar
+        entries={history}
+        selectedUrl={imageUrl}
+        onSelect={(url) => {
+          setImageUrl(url);
+          setBatchResults([]);
+          setBanner({ kind: "none" });
+        }}
+        onDelete={async (filenames) => {
+          await deleteGenerated(filenames);
+          if (imageUrl && filenames.some((f) => imageUrl.endsWith(`/${f}`))) {
+            setImageUrl(null);
+          }
+          await refreshUsed();
+        }}
+      />
+      <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
+        <header className="mb-10">
+          <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.035em] text-ink">
+            Create a <span className="grad-title">flashcard worksheet</span>
+          </h1>
+          <p className="mt-2 max-w-xl text-[0.95rem] text-ink-soft">
+            Six K-level words on one printable page. Suggest from a topic or type your own.
+          </p>
+        </header>
 
-        <div className="flex flex-wrap items-center gap-4">
+        {imageUrl && (
+          <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
+            <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
+              <span className="label-eyebrow">The Worksheet</span>
+              <span className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="rounded-md border border-border bg-bg px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-wider text-ink-soft transition-colors hover:bg-border hover:text-ink"
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImageUrl(null)}
+                  className="font-mono text-[0.7rem] uppercase tracking-wider text-ink-faint transition-colors hover:text-ink"
+                  aria-label="Close preview"
+                >
+                  Close ✕
+                </button>
+              </span>
+            </figcaption>
+            <img
+              src={imageUrl}
+              alt="generated worksheet"
+              className="print-target w-full"
+              data-testid="preview"
+            />
+          </figure>
+        )}
+
+        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <TopicInput value={topic} onChange={setTopic} />
-          <QualityRadio value={quality} onChange={setQuality} disabled={busy} />
+          <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
           <button
             type="button"
             onClick={handleGenerate}
             disabled={busy}
-            className="rounded-full bg-accent px-6 py-2 font-bold text-white shadow-sm hover:bg-accent-strong disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-ink"
           >
             {generateLabel}
+            <span
+              aria-hidden="true"
+              className="rounded-[4px] bg-white/15 px-1.5 py-px font-mono text-[0.7rem]"
+            >
+              ⌘ ↵
+            </span>
           </button>
+          <span className="mx-1 h-4 w-px bg-border" />
           <BatchControls
             topic={topic}
             quality={quality}
@@ -165,43 +268,60 @@ export default function Page() {
             <button
               type="button"
               onClick={cancelWork}
-              className="rounded-full bg-soft-red px-4 py-2 font-semibold text-white shadow-sm hover:bg-deep-red"
+              className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
             >
               Cancel
             </button>
           )}
-          {imageUrl && (
+          {hasAnyContent && !busy && (
             <button
               type="button"
-              onClick={() => window.print()}
-              className="rounded-full border border-blush bg-cream px-4 py-2 font-semibold text-ink hover:bg-blush"
+              onClick={handleClear}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
             >
-              Print
+              Clear
             </button>
           )}
+          <span className="ml-auto inline-flex items-center gap-1 font-mono text-[0.7rem] text-ink-faint">
+            <kbd className="rounded-[4px] border border-border-strong border-b-2 bg-bg px-1.5 py-px font-mono text-[0.7rem] text-ink-soft">
+              ?
+            </kbd>
+            <span>shortcuts</span>
+          </span>
         </div>
 
-        <ErrorBanner {...bannerToProps(banner)} />
+        {banner.kind !== "none" && (
+          <div className="mb-5">
+            <ErrorBanner {...bannerToProps(banner)} />
+          </div>
+        )}
 
         <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
 
-        {imageUrl && (
-          <img
-            src={imageUrl}
-            alt="generated worksheet"
-            className="print-target max-w-full rounded-2xl border border-blush"
-            data-testid="preview"
-          />
-        )}
+        <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${
+                usedLoaded ? "bg-success" : "bg-ink-faint"
+              }`}
+            />
+            {usedLoaded
+              ? `backend ready · ${usedWords.length} words in library`
+              : "connecting…"}
+          </span>
+          <span>v1.0 · gpt-image-2 · gpt-5.4</span>
+        </div>
 
-        <BatchPreview batches={batchResults} />
+        <div className="mt-10">
+          <BatchPreview batches={batchResults} />
+        </div>
       </main>
       <UsedWordsSidebar words={usedWords} />
     </div>
   );
 }
 
-function QualityRadio({
+function QualityPanel({
   value,
   onChange,
   disabled,
@@ -217,31 +337,33 @@ function QualityRadio({
   ];
   return (
     <fieldset
-      className="flex items-center gap-2 text-sm text-ink"
+      className="block rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm"
       aria-label="Image quality"
     >
-      <legend className="mr-1 font-semibold">Quality</legend>
-      {options.map((o) => (
-        <label
-          key={o.value}
-          className={`flex items-center gap-1 rounded-full border px-3 py-1 cursor-pointer ${
-            value === o.value
-              ? "border-accent bg-accent text-white"
-              : "border-blush bg-white text-ink hover:bg-blush"
-          } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-        >
-          <input
-            type="radio"
-            name="quality"
-            value={o.value}
-            checked={value === o.value}
-            onChange={() => onChange(o.value)}
-            disabled={disabled}
-            className="sr-only"
-          />
-          <span>{o.label}</span>
-        </label>
-      ))}
+      <legend className="label-eyebrow float-none px-0">Quality</legend>
+      <div className="mt-1.5 flex gap-0 rounded-lg bg-border p-[2px]">
+        {options.map((o) => (
+          <label
+            key={o.value}
+            className={`flex-1 cursor-pointer rounded-md py-1.5 text-center text-[0.85rem] font-medium transition-all ${
+              value === o.value
+                ? "bg-surface text-ink shadow-card-sm"
+                : "text-ink-soft hover:text-ink"
+            } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          >
+            <input
+              type="radio"
+              name="quality"
+              value={o.value}
+              checked={value === o.value}
+              onChange={() => onChange(o.value)}
+              disabled={disabled}
+              className="sr-only"
+            />
+            {o.label}
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
