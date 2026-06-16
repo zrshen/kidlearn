@@ -221,3 +221,52 @@ def test_generate_gt_pair_cleans_up_orphan_front_when_back_fails(gt_gen_dir):
             gt_lib.generate_gt_pair(_spec())
     # No half-pair left behind.
     assert list(gt_gen_dir.glob("gt-*")) == []
+
+
+def test_batch_generate_gt_happy_path(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    from unittest.mock import patch
+    with patch.object(gt_lib, "suggest_gt_spec", side_effect=[_spec(), _spec()]):
+        results = gt_lib.batch_generate_gt(n=2, topic="fruits", quality="low")
+    assert len(results) == 2
+    assert all(r["front_url"].endswith("-front.png") for r in results)
+    assert all(r["theme"] == "fruits" for r in results)
+
+
+def test_batch_generate_gt_partial_failure(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    from unittest.mock import patch
+    effects = [_spec(), gt_lib.SuggestionError("bad spec")]
+    with patch.object(gt_lib, "suggest_gt_spec", side_effect=effects):
+        with pytest.raises(gt_lib.PartialBatchError) as exc:
+            gt_lib.batch_generate_gt(n=2, topic=None)
+    assert len(exc.value.completed) == 1
+    assert "bad spec" in exc.value.reason
+
+
+def test_batch_generate_gt_rejects_nonpositive_n(gt_gen_dir):
+    with pytest.raises(ValueError):
+        gt_lib.batch_generate_gt(n=0, topic=None)
+
+
+def test_list_gt_pairs_returns_newest_first(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    a = gt_lib.generate_gt_pair({**_spec(), "theme": "alpha"})
+    b = gt_lib.generate_gt_pair({**_spec(), "theme": "beta"})
+    items = gt_lib.list_gt_pairs()
+    ids = [it["id"] for it in items]
+    assert set(ids) == {a["id"], b["id"]}
+    assert items[0]["mtime"] >= items[1]["mtime"]
+    assert items[0]["front_url"].startswith("/generated/gt-")
+
+
+def test_delete_gt_removes_pngs_and_manifest(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    r = gt_lib.generate_gt_pair(_spec())
+    out = gt_lib.delete_gt([r["id"]])
+    assert out["deleted"] == [r["id"]]
+    assert list(gt_gen_dir.glob(f"gt-{r['id']}*")) == []
+
+
+def test_delete_gt_ignores_unknown_id(gt_gen_dir):
+    assert gt_lib.delete_gt(["does-not-exist"]) == {"deleted": []}

@@ -312,3 +312,62 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
     }
     manifest_path.write_text(json.dumps(manifest) + "\n")
     return {"id": gid, "front_url": f"/generated/{front_path.name}", "back_url": f"/generated/{back_path.name}"}
+
+
+class PartialBatchError(Exception):
+    def __init__(self, completed: list[dict], reason: str) -> None:
+        super().__init__(reason)
+        self.completed = completed
+        self.reason = reason
+
+
+def batch_generate_gt(n: int, topic: str | None, test: str | None = None, quality: Quality = "medium") -> list[dict]:
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    completed: list[dict] = []
+    for i in range(n):
+        try:
+            spec = suggest_gt_spec(topic, test)
+            pair = generate_gt_pair(spec, quality=quality)
+        except Exception as e:
+            raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
+        completed.append({**pair, "theme": str(spec.get("theme", "")), "test": str(spec.get("test", ""))})
+    return completed
+
+
+def list_gt_pairs() -> list[dict]:
+    items: list[dict] = []
+    for mp in GENERATED_DIR.glob("gt-*.json"):
+        try:
+            m = json.loads(mp.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        items.append(
+            {
+                "id": m.get("id", mp.stem.removeprefix("gt-")),
+                "theme": m.get("theme", ""),
+                "test": m.get("test", ""),
+                "front_url": f"/generated/{m['front']}",
+                "back_url": f"/generated/{m['back']}",
+                "mtime": mp.stat().st_mtime,
+            }
+        )
+    items.sort(key=lambda e: e["mtime"], reverse=True)
+    return items
+
+
+def delete_gt(ids: list[str]) -> dict:
+    deleted: list[str] = []
+    for gid in ids:
+        if not re.fullmatch(r"[a-z0-9-]+", gid):
+            continue
+        manifest = GENERATED_DIR / f"gt-{gid}.json"
+        front = GENERATED_DIR / f"gt-{gid}-front.png"
+        back = GENERATED_DIR / f"gt-{gid}-back.png"
+        if not manifest.is_file() and not front.is_file():
+            continue
+        manifest.unlink(missing_ok=True)
+        front.unlink(missing_ok=True)
+        back.unlink(missing_ok=True)
+        deleted.append(gid)
+    return {"deleted": deleted}
