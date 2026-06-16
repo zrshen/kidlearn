@@ -10,14 +10,18 @@ Two OpenAI models are used:
 | Model | Purpose |
 |---|---|
 | `gpt-image-2` | Renders the 1536×1024 worksheet PNG |
-| `gpt-5.5` | Suggests 6 K-level (word, sentence) pairs from a topic |
+| `gpt-5.5` | Suggests flashcard (word, sentence) pairs, and designs GT reasoning-panel specs |
+
+There are two worksheet types: **Flashcard** (the original) and **GT Thinking** —
+Kindergarten gifted-and-talented reasoning sheets. Switch between them in the web
+app's header tabs.
 
 ![Flashcard generator UI](docs/assets/screenshot.png)
 
 ## Features
 
 - **Suggest from a topic** — type a theme (animals, food, weather) or leave it
-  blank to let `gpt-5.4` pick a coherent set of 6 K-level words.
+  blank to let `gpt-5.5` pick a coherent set of 6 K-level words.
 - **One-click generate** — six (word, sentence) pairs in, one PNG worksheet out.
 - **Batch mode** — generate N worksheets in a row, each on a fresh topic-coherent
   set with no word reuse.
@@ -32,6 +36,12 @@ Two OpenAI models are used:
 - **Print-ready** — each worksheet fits a single US Letter page (landscape,
   0.25" margins, `object-fit: contain`) so the browser print dialog produces
   exactly one sheet per worksheet.
+- **GT Thinking mode** — switch to "GT Thinking" for gifted-and-talented reasoning
+  sheets: an LLM designs six themed reasoning panels (odd-one-out, patterns,
+  analogies, matrices…) for a chosen **test focus** (General GT, CogAT, NNAT,
+  OLSAT, or a custom test name), and `gpt-image-2` renders a **front** (questions)
+  and **back** (answer key) image pair that print as two pages. GT sheets are
+  freshly generated each time and don't use the no-repeat word library.
 
 ## Quickstart
 
@@ -49,18 +59,28 @@ Other useful targets: `make backend`, `make frontend`, `make stop`, `make test`,
 ## Architecture
 
 ```
+worksheet_common.py  Shared image-production helper: the gpt-image-2 call plus
+                     stub-env handling, used by both flashcard_lib and gt_lib.
+
 flashcard_lib.py   Pure Python: prompt template, OpenAI calls (image + vision +
                    chat), file-locked used_words.json read/write, sidecar
                    metadata, batch + backfill.
 
-server/main.py     FastAPI app — thin wrapper around flashcard_lib.
+gt_lib.py          GT worksheets: test profiles/catalogs, spec suggestion,
+                   front/back prompt rendering, two-image pair generation,
+                   batch + list + delete.
+
+server/main.py     FastAPI app — thin wrapper around flashcard_lib and gt_lib.
                    Mounts /generated/* as static files.
 
 server/generated/  Output directory:
-                     image-<firstWord>.png   the worksheet
+                     image-<firstWord>.png   a flashcard worksheet
                      image-<firstWord>.json  sidecar { "words": [...6] }
+                     gt-<id>-front.png        a GT worksheet (questions)
+                     gt-<id>-back.png         the matching answer key
+                     gt-<id>.json             GT manifest { spec, theme, test, … }
 
-used_words.json    The library. Single source of truth, fcntl-locked.
+used_words.json    The flashcard library. Single source of truth, fcntl-locked.
 
 web/               Next.js 16 (App Router) + Tailwind v4 + TypeScript.
                    Vitest + RTL + MSW for unit tests; Playwright for E2E.
@@ -77,6 +97,11 @@ web/               Next.js 16 (App Router) + Tailwind v4 + TypeScript.
 | `GET`  | `/api/generated`          | Archive listing with all 6 words per worksheet |
 | `POST` | `/api/generated/backfill` | Extract words from older PNGs via vision and write sidecars |
 | `POST` | `/api/generated/delete`   | Delete worksheets and release their words back to the library |
+| `POST` | `/api/gt/suggest`         | `{topic, test}` → a 6-panel GT spec with answers (502 on failure) |
+| `POST` | `/api/gt/generate`        | `{spec, quality}` → `{id, front_url, back_url}` (400 on invalid spec) |
+| `POST` | `/api/gt/batch`           | `{topic, test, n, quality}` → N front/back pairs (502 partial) |
+| `GET`  | `/api/gt/generated`       | GT archive listing (id, theme, test, front/back URLs) |
+| `POST` | `/api/gt/generated/delete`| `{ids}` → delete GT worksheet pairs by id |
 
 ## Tests
 
@@ -97,6 +122,8 @@ is made during Playwright runs.
 | `FLASHCARD_STUB_IMAGE` | Path to a PNG used instead of calling the image model |
 | `FLASHCARD_STUB_SUGGEST` | Path to a JSON fixture used instead of calling the suggest model |
 | `FLASHCARD_STUB_EXTRACT` | Path to a JSON fixture used instead of calling the vision model (backfill) |
+| `GT_STUB_SPEC` | Path to a JSON fixture used instead of calling the GT spec-suggest model |
+| `GT_STUB_IMAGE` | Path to a PNG used instead of calling the image model for GT front/back pairs |
 | `NEXT_PUBLIC_API_URL` | Frontend's backend base URL (default `http://localhost:8000`) |
 
 ## CLI mode
