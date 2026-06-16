@@ -272,3 +272,43 @@ BOTTOM BANNER: "Great job! Keep thinking and learning!"
 
 IMPORTANT:
 - BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
+
+
+def _slug(theme: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (theme or "gt").lower()).strip("-")
+    return s or "gt"
+
+
+def _new_id(theme: str) -> str:
+    return f"{_slug(theme)}-{int(time.time() * 1000)}"
+
+
+def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
+    validate_spec(spec)
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    theme = str(spec.get("theme", ""))
+    gid = _new_id(theme)
+    front_path = GENERATED_DIR / f"gt-{gid}-front.png"
+    back_path = GENERATED_DIR / f"gt-{gid}-back.png"
+    manifest_path = GENERATED_DIR / f"gt-{gid}.json"
+
+    front_bytes = produce_png_bytes(render_front_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    front_path.write_bytes(front_bytes)
+    try:
+        back_bytes = produce_png_bytes(render_back_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    except Exception:
+        front_path.unlink(missing_ok=True)
+        raise
+    back_path.write_bytes(back_bytes)
+
+    manifest = {
+        "kind": "gt",
+        "id": gid,
+        "theme": theme,
+        "test": str(spec.get("test", "")),
+        "spec": spec,
+        "front": front_path.name,
+        "back": back_path.name,
+    }
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    return {"id": gid, "front_url": f"/generated/{front_path.name}", "back_url": f"/generated/{back_path.name}"}

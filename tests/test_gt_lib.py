@@ -6,6 +6,12 @@ import pytest
 import gt_lib
 
 
+def _write_stub_png(dir_path: Path) -> Path:
+    p = dir_path / "stub.png"
+    p.write_bytes(bytes.fromhex("89504e470d0a1a0a") + b"stub")
+    return p
+
+
 def _panel(t="odd_one_out", **over):
     p = {
         "type": t,
@@ -173,3 +179,45 @@ def test_both_prompts_contain_every_heading_and_question():
     for p in spec["panels"]:
         assert p["heading"] in front and p["heading"] in back
         assert p["question"] in front and p["question"] in back
+
+
+PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"stub"
+
+
+@pytest.fixture
+def gt_gen_dir(tmp_path, monkeypatch):
+    gen = tmp_path / "generated"
+    gen.mkdir()
+    monkeypatch.setattr(gt_lib, "GENERATED_DIR", gen)
+    return gen
+
+
+def test_generate_gt_pair_writes_two_pngs_and_manifest(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    result = gt_lib.generate_gt_pair(_spec(), quality="low")
+    assert result["id"].startswith("fruits-")
+    front = gt_gen_dir / f"gt-{result['id']}-front.png"
+    back = gt_gen_dir / f"gt-{result['id']}-back.png"
+    manifest = gt_gen_dir / f"gt-{result['id']}.json"
+    assert front.is_file() and back.is_file() and manifest.is_file()
+    assert result["front_url"] == f"/generated/{front.name}"
+    assert result["back_url"] == f"/generated/{back.name}"
+    data = json.loads(manifest.read_text())
+    assert data["kind"] == "gt" and data["theme"] == "fruits"
+
+
+def test_generate_gt_pair_cleans_up_orphan_front_when_back_fails(gt_gen_dir):
+    from unittest.mock import patch
+    calls = {"n": 0}
+
+    def fake_produce(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return PNG_BYTES
+        raise RuntimeError("back image failed")
+
+    with patch.object(gt_lib, "produce_png_bytes", side_effect=fake_produce):
+        with pytest.raises(RuntimeError, match="back image failed"):
+            gt_lib.generate_gt_pair(_spec())
+    # No half-pair left behind.
+    assert list(gt_gen_dir.glob("gt-*")) == []
