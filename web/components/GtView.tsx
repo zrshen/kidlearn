@@ -34,6 +34,7 @@ export function GtView({ topic, quality }: { topic: string; quality: Quality }) 
   async function handleGenerate() {
     setBanner({ kind: "none" });
     setPair(null);
+    setSpec(null);
     setBusy(true);
     const signal = startWork();
     const sug = await suggestGt(topic.trim() || null, effectiveTest, signal);
