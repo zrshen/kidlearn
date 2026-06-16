@@ -112,3 +112,87 @@ def validate_spec(spec: dict) -> dict:
             if not str(p.get(field, "")).strip():
                 raise ValueError(f"panel {i}: missing {field}")
     return spec
+
+
+SUGGEST_MODEL = "gpt-5.5"
+SUGGEST_REASONING_EFFORT = "low"
+SUGGEST_MAX_RETRIES = 3
+
+
+class SuggestionError(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _build_suggest_messages(topic: str | None, profile: dict) -> list[dict]:
+    catalog_lines = "\n".join(f"- {k}: {v}" for k, v in profile["catalog"].items())
+    theme_rule = (
+        f'Theme every panel around: "{topic}".'
+        if topic and topic.strip()
+        else "Pick ONE cohesive kid-friendly theme (animals, food, shapes, weather) for all panels."
+    )
+    system = (
+        "You design Kindergarten gifted-and-talented thinking worksheets. "
+        "Respond with JSON only."
+    )
+    user = f"""Design ONE Kindergarten worksheet, {profile['framing']}, with EXACTLY 6 panels.
+
+Choose 6 DISTINCT panel types. Prefer these subtypes for this test (use the keys verbatim
+when they apply; for a custom test you may use that test's own subtype names):
+{catalog_lines}
+
+{theme_rule}
+
+For each panel provide:
+- type: a short subtype key (snake_case)
+- heading: short title (e.g. "Picture Analogies")
+- question: the question a child reads
+- items: list of picture words to draw (or [] if none)
+- choices: list like ["A = red circle", "B = blue square"] (or [] if none)
+- instruction: short bottom instruction
+- answer: the correct answer stated clearly (e.g. "B (doghouse)")
+- explanation: short reason (or "" if none)
+
+Rules:
+- Everything must be K-level, age-appropriate, and visual.
+- The answer MUST be correct and consistent with the question.
+- Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...6 panels... ]}}
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def _finalize_spec(spec: dict, profile: dict) -> dict:
+    validate_spec(spec)
+    spec["title"] = profile["title"]
+    spec["test"] = profile["label"]
+    return spec
+
+
+def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
+    profile = resolve_profile(test)
+    stub = os.environ.get("GT_STUB_SPEC")
+    if stub:
+        return _finalize_spec(json.loads(Path(stub).read_text()), profile)
+    messages = _build_suggest_messages(topic, profile)
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(
+                model=SUGGEST_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                reasoning_effort=SUGGEST_REASONING_EFFORT,
+            )
+            content = resp.choices[0].message.content
+            if not content:
+                last_reason = "empty response from model"
+                continue
+            return _finalize_spec(json.loads(content), profile)
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            last_reason = f"could not parse model response: {e}"
+            continue
+    raise SuggestionError(last_reason)
