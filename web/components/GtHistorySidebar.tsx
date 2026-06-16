@@ -20,13 +20,14 @@ export function GtHistorySidebar({
         <button
           key={e.id}
           type="button"
+          aria-pressed={selectedId === e.id}
           onClick={() => onSelect(e)}
           className={`mb-3 block w-full overflow-hidden rounded-xl border bg-surface text-left shadow-card-sm transition-colors ${
             selectedId === e.id ? "border-accent" : "border-border hover:border-border-strong"
           }`}
         >
           <div className="relative aspect-[3/2] bg-[#fff7ec]">
-            <img src={e.frontUrl} alt={e.theme} className="absolute inset-0 h-full w-full object-cover" />
+            <img src={e.frontUrl} alt={e.theme || e.id} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
             <span className="absolute right-1.5 top-1.5 flex gap-1">
               <span className="rounded-full bg-black/60 px-1.5 py-px font-mono text-[0.55rem] font-semibold text-white">FRONT</span>
               <span className="rounded-full bg-black/60 px-1.5 py-px font-mono text-[0.55rem] font-semibold text-white">BACK</span>
