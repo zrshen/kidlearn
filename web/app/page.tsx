@@ -91,6 +91,7 @@ export default function Page() {
   useEffect(() => {
     document.body.classList.toggle("gt-mode", mode === "gt");
     document.body.classList.toggle("flashcard-mode", mode === "flashcard");
+    return () => document.body.classList.remove("gt-mode", "flashcard-mode");
   }, [mode]);
 
   useEffect(() => {
@@ -233,119 +234,119 @@ export default function Page() {
           <GtView topic={topic} quality={quality} />
         ) : (
           <>
-        {imageUrl && (
-          <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
-            <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
-              <span className="label-eyebrow">The Worksheet</span>
-              <span className="flex items-center gap-3">
+            {imageUrl && (
+              <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
+                <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
+                  <span className="label-eyebrow">The Worksheet</span>
+                  <span className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="rounded-md border border-border bg-bg px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-wider text-ink-soft transition-colors hover:bg-border hover:text-ink"
+                    >
+                      Print
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageUrl(null)}
+                      className="font-mono text-[0.7rem] uppercase tracking-wider text-ink-faint transition-colors hover:text-ink"
+                      aria-label="Close preview"
+                    >
+                      Close ✕
+                    </button>
+                  </span>
+                </figcaption>
+                <img
+                  src={imageUrl}
+                  alt="generated worksheet"
+                  className="print-target w-full"
+                  data-testid="preview"
+                />
+              </figure>
+            )}
+
+            <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-ink"
+              >
+                {generateLabel}
+                <span
+                  aria-hidden="true"
+                  className="rounded-[4px] bg-white/15 px-1.5 py-px font-mono text-[0.7rem]"
+                >
+                  ⌘ ↵
+                </span>
+              </button>
+              <span className="mx-1 h-4 w-px bg-border" />
+              <BatchControls
+                topic={topic}
+                quality={quality}
+                getSignal={startWork}
+                onBatchDone={(batches) => {
+                  handleBatchDone(batches);
+                  setBanner({ kind: "none" });
+                }}
+                onError={(msg, completed) => {
+                  handleBatchError(msg, completed);
+                }}
+                disabled={busy}
+                onBusyChange={setBatching}
+                elapsedLabel={elapsedLabel}
+              />
+              {busy && (
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="rounded-md border border-border bg-bg px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-wider text-ink-soft transition-colors hover:bg-border hover:text-ink"
+                  onClick={cancelWork}
+                  className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
                 >
-                  Print
+                  Cancel
                 </button>
+              )}
+              {hasAnyContent && !busy && (
                 <button
                   type="button"
-                  onClick={() => setImageUrl(null)}
-                  className="font-mono text-[0.7rem] uppercase tracking-wider text-ink-faint transition-colors hover:text-ink"
-                  aria-label="Close preview"
+                  onClick={handleClear}
+                  className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
                 >
-                  Close ✕
+                  Clear
                 </button>
+              )}
+              <span className="ml-auto inline-flex items-center gap-1 font-mono text-[0.7rem] text-ink-faint">
+                <kbd className="rounded-[4px] border border-border-strong border-b-2 bg-bg px-1.5 py-px font-mono text-[0.7rem] text-ink-soft">
+                  ?
+                </kbd>
+                <span>shortcuts</span>
               </span>
-            </figcaption>
-            <img
-              src={imageUrl}
-              alt="generated worksheet"
-              className="print-target w-full"
-              data-testid="preview"
-            />
-          </figure>
-        )}
+            </div>
 
-        <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={busy}
-            className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-ink"
-          >
-            {generateLabel}
-            <span
-              aria-hidden="true"
-              className="rounded-[4px] bg-white/15 px-1.5 py-px font-mono text-[0.7rem]"
-            >
-              ⌘ ↵
-            </span>
-          </button>
-          <span className="mx-1 h-4 w-px bg-border" />
-          <BatchControls
-            topic={topic}
-            quality={quality}
-            getSignal={startWork}
-            onBatchDone={(batches) => {
-              handleBatchDone(batches);
-              setBanner({ kind: "none" });
-            }}
-            onError={(msg, completed) => {
-              handleBatchError(msg, completed);
-            }}
-            disabled={busy}
-            onBusyChange={setBatching}
-            elapsedLabel={elapsedLabel}
-          />
-          {busy && (
-            <button
-              type="button"
-              onClick={cancelWork}
-              className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
-            >
-              Cancel
-            </button>
-          )}
-          {hasAnyContent && !busy && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
-            >
-              Clear
-            </button>
-          )}
-          <span className="ml-auto inline-flex items-center gap-1 font-mono text-[0.7rem] text-ink-faint">
-            <kbd className="rounded-[4px] border border-border-strong border-b-2 bg-bg px-1.5 py-px font-mono text-[0.7rem] text-ink-soft">
-              ?
-            </kbd>
-            <span>shortcuts</span>
-          </span>
-        </div>
+            {banner.kind !== "none" && (
+              <div className="mb-5">
+                <ErrorBanner {...banner} />
+              </div>
+            )}
 
-        {banner.kind !== "none" && (
-          <div className="mb-5">
-            <ErrorBanner {...banner} />
-          </div>
-        )}
+            <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
 
-        <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
+            <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    usedLoaded ? "bg-success" : "bg-ink-faint"
+                  }`}
+                />
+                {usedLoaded
+                  ? `backend ready · ${usedWords.length} words in library`
+                  : "connecting…"}
+              </span>
+              <span>v1.0 · gpt-image-2 · gpt-5.5</span>
+            </div>
 
-        <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                usedLoaded ? "bg-success" : "bg-ink-faint"
-              }`}
-            />
-            {usedLoaded
-              ? `backend ready · ${usedWords.length} words in library`
-              : "connecting…"}
-          </span>
-          <span>v1.0 · gpt-image-2 · gpt-5.5</span>
-        </div>
-
-        <div className="mt-10">
-          <BatchPreview batches={batchResults} />
-        </div>
+            <div className="mt-10">
+              <BatchPreview batches={batchResults} />
+            </div>
           </>
         )}
       </main>
