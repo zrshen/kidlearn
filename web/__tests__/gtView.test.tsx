@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { GtView } from "../components/GtView";
+import Page from "../app/page";
 
 describe("GtView", () => {
   it("renders the stacked front and back preview after Suggest & Generate", async () => {
@@ -63,5 +64,16 @@ describe("GtView", () => {
     await user.type(screen.getByLabelText(/other test/i), "Iowa Assessments");
     await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
     await waitFor(() => expect(body?.test).toBe("Iowa Assessments"));
+  });
+});
+
+describe("worksheet type switcher", () => {
+  it("switches to GT mode, hides flashcard input rows, and disables the word library", async () => {
+    const user = userEvent.setup();
+    render(<Page />);
+    await screen.findByRole("button", { name: /suggest & generate/i });
+    await user.click(screen.getByRole("tab", { name: /gt thinking/i }));
+    expect(screen.queryByPlaceholderText("word")).not.toBeInTheDocument();
+    expect(screen.getByText(/flashcard mode only/i)).toBeInTheDocument();
   });
 });

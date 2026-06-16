@@ -7,16 +7,21 @@ import { HistorySidebar } from "../components/HistorySidebar";
 import { InputRows, emptyItems, type Item } from "../components/InputRows";
 import { TopicInput } from "../components/TopicInput";
 import { UsedWordsSidebar } from "../components/UsedWordsSidebar";
+import { WorksheetTypeSwitcher, type WorksheetType } from "../components/WorksheetTypeSwitcher";
+import { GtView } from "../components/GtView";
+import { GtHistorySidebar } from "../components/GtHistorySidebar";
 import {
   backfillGenerated,
   deleteGenerated,
   fetchGenerated,
+  fetchGtGenerated,
   fetchUsedWords,
   generate,
   suggest,
   type Batch,
   type GenerateResult,
   type GeneratedEntry,
+  type GtHistoryEntry,
   type Quality,
 } from "./api";
 
@@ -38,6 +43,9 @@ export default function Page() {
   const [batching, setBatching] = useState(false);
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
   const [usedLoaded, setUsedLoaded] = useState(false);
+  const [mode, setMode] = useState<WorksheetType>("flashcard");
+  const [gtHistory, setGtHistory] = useState<GtHistoryEntry[]>([]);
+  const [gtSelectedId, setGtSelectedId] = useState<string | null>(null);
 
   const busy = generating || suggesting || batching;
   const elapsed = useElapsedSeconds(busy);
@@ -79,6 +87,20 @@ export default function Page() {
         /* sidebar stays empty; not a blocking error */
       });
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("gt-mode", mode === "gt");
+    document.body.classList.toggle("flashcard-mode", mode === "flashcard");
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "gt") return;
+    fetchGtGenerated()
+      .then(setGtHistory)
+      .catch(() => {
+        /* sidebar stays empty; not blocking */
+      });
+  }, [mode]);
 
   async function refreshUsed() {
     try {
@@ -171,23 +193,28 @@ export default function Page() {
 
   return (
     <div className="flex min-h-screen bg-bg">
-      <HistorySidebar
-        entries={history}
-        selectedUrl={imageUrl}
-        onSelect={(url) => {
-          setImageUrl(url);
-          setBatchResults([]);
-          setBanner({ kind: "none" });
-        }}
-        onDelete={async (filenames) => {
-          await deleteGenerated(filenames);
-          if (imageUrl && filenames.some((f) => imageUrl.endsWith(`/${f}`))) {
-            setImageUrl(null);
-          }
-          await refreshUsed();
-        }}
-      />
+      {mode === "flashcard" ? (
+        <HistorySidebar
+          entries={history}
+          selectedUrl={imageUrl}
+          onSelect={(url) => {
+            setImageUrl(url);
+            setBatchResults([]);
+            setBanner({ kind: "none" });
+          }}
+          onDelete={async (filenames) => {
+            await deleteGenerated(filenames);
+            if (imageUrl && filenames.some((f) => imageUrl.endsWith(`/${f}`))) {
+              setImageUrl(null);
+            }
+            await refreshUsed();
+          }}
+        />
+      ) : (
+        <GtHistorySidebar entries={gtHistory} selectedId={gtSelectedId} onSelect={(e) => setGtSelectedId(e.id)} />
+      )}
       <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
+        <WorksheetTypeSwitcher value={mode} onChange={setMode} />
         <header className="mb-10">
           <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.035em] text-ink">
             Create a <span className="grad-title">flashcard worksheet</span>
@@ -197,6 +224,15 @@ export default function Page() {
           </p>
         </header>
 
+        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <TopicInput value={topic} onChange={setTopic} />
+          <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
+        </div>
+
+        {mode === "gt" ? (
+          <GtView topic={topic} quality={quality} />
+        ) : (
+          <>
         {imageUrl && (
           <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
             <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -227,11 +263,6 @@ export default function Page() {
             />
           </figure>
         )}
-
-        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <TopicInput value={topic} onChange={setTopic} />
-          <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
-        </div>
 
         <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
           <button
@@ -315,8 +346,18 @@ export default function Page() {
         <div className="mt-10">
           <BatchPreview batches={batchResults} />
         </div>
+          </>
+        )}
       </main>
-      <UsedWordsSidebar words={usedWords} />
+      {mode === "flashcard" ? (
+        <UsedWordsSidebar words={usedWords} />
+      ) : (
+        <aside className="sticky top-0 h-screen w-[232px] flex-shrink-0 border-l border-border bg-surface p-5 opacity-50">
+          <span className="label-eyebrow">Word Library</span>
+          <p className="mt-2 font-mono text-[0.66rem] text-ink-faint">🔒 Flashcard mode only</p>
+          <p className="mt-2 text-[0.78rem] text-ink-faint">GT worksheets don’t track used words — every sheet is freshly generated.</p>
+        </aside>
+      )}
     </div>
   );
 }
