@@ -149,3 +149,27 @@ def test_suggest_gt_spec_stub_mode_skips_openai(monkeypatch):
     assert spec["theme"] == "fruits & animals"
     assert spec["test"] == "CogAT"
     crash.chat.completions.create.assert_not_called()
+
+
+def test_front_prompt_hides_answers_back_prompt_reveals():
+    spec = _spec()
+    front = gt_lib.render_front_prompt(spec)
+    back = gt_lib.render_back_prompt(spec)
+    # The "ANSWER:" reveal label appears only on the back.
+    assert "ANSWER:" not in front
+    assert "ANSWER:" in back
+    # The explanation text leaks only on the back.
+    assert "It is not a fruit." not in front
+    assert "It is not a fruit." in back
+    # "Back (Answers)" marking only on the back.
+    assert "Back (Answers)" in back
+    assert "Back (Answers)" not in front
+
+
+def test_both_prompts_contain_every_heading_and_question():
+    spec = _spec()
+    front = gt_lib.render_front_prompt(spec)
+    back = gt_lib.render_back_prompt(spec)
+    for p in spec["panels"]:
+        assert p["heading"] in front and p["heading"] in back
+        assert p["question"] in front and p["question"] in back

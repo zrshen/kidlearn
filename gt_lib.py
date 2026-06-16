@@ -196,3 +196,79 @@ def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
             last_reason = f"could not parse model response: {e}"
             continue
     raise SuggestionError(last_reason)
+
+
+_PAGE_FORMAT = """PAGE FORMAT:
+- Landscape worksheet. White background.
+- Bright, cheerful, colorful classroom worksheet style with large, easy-to-read text.
+- Clean 3-column x 2-row grid layout. Exactly 6 panels.
+- Rounded panel boxes with thin colorful borders, each clearly numbered 1 through 6.
+- Cute kid-friendly cartoon illustrations. Clean, uncluttered spacing.
+- No watermark, no logo, no extra panels."""
+
+
+def _panel_block(p: dict, *, reveal: bool) -> str:
+    lines = [
+        f"Panel: {p['heading']} (type: {p['type']})",
+        f"Question: {p['question']}",
+    ]
+    if p.get("items"):
+        lines.append("Pictures: " + ", ".join(p["items"]))
+    if p.get("choices"):
+        lines.append("Choices: " + "; ".join(p["choices"]))
+    if str(p.get("instruction", "")).strip():
+        lines.append(f"Instruction: {p['instruction']}")
+    if reveal:
+        lines.append(f"ANSWER: {p['answer']}")
+        if str(p.get("explanation", "")).strip():
+            lines.append(f"Explanation: {p['explanation']}")
+    return "\n".join(lines)
+
+
+def render_front_prompt(spec: dict) -> str:
+    title = spec.get("title", GT_TITLE)
+    panels = "\n\n".join(_panel_block(p, reveal=False) for p in spec["panels"])
+    return f"""Create ONE educational worksheet image for a Kindergarten student.
+
+TITLE: "{title}"
+
+OUTPUT: FRONT side only. Do NOT include answers. One image only.
+
+{_PAGE_FORMAT}
+
+USE EXACTLY THIS CONTENT:
+
+{panels}
+
+BOTTOM BANNER: "Think carefully and choose the best answer!"
+
+IMPORTANT:
+- FRONT side only. No answers visible. Do not circle any answer. Do not reveal the solution.
+- Keep all text spelled correctly. Make it printable and classroom-friendly."""
+
+
+def render_back_prompt(spec: dict) -> str:
+    title = spec.get("title", GT_TITLE)
+    panels = "\n\n".join(_panel_block(p, reveal=True) for p in spec["panels"])
+    return f"""Create ONE educational worksheet image for a Kindergarten student.
+
+TITLE: "{title}"
+
+OUTPUT: BACK side only (answer key). One image only. Match the front worksheet's layout.
+Clearly mark this as the answer page with the words "Back (Answers)".
+
+{_PAGE_FORMAT}
+
+USE EXACTLY THIS CONTENT:
+
+{panels}
+
+BACK-SIDE RULES:
+- Show the same question content and images as the front page.
+- Reveal the correct answer clearly; circle or highlight the correct choice.
+- Add a short answer label in each panel. Keep the layout aligned with the front.
+
+BOTTOM BANNER: "Great job! Keep thinking and learning!"
+
+IMPORTANT:
+- BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
