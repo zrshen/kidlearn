@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import flashcard_lib
+import gt_lib
 
 app = FastAPI()
 
@@ -100,6 +101,35 @@ def batch(req: BatchRequest) -> dict:
             },
         )
     return {"batches": [_translate_entry(c) for c in completed]}
+
+
+class GtSuggestRequest(BaseModel):
+    topic: Annotated[str | None, Field(default=None, max_length=100)] = None
+    test: Annotated[str | None, Field(default=None, max_length=60)] = None
+
+
+@app.post("/api/gt/suggest")
+def gt_suggest(req: GtSuggestRequest) -> dict:
+    try:
+        spec = gt_lib.suggest_gt_spec(req.topic, req.test)
+    except gt_lib.SuggestionError as e:
+        raise HTTPException(status_code=502, detail={"error": f"Couldn't generate GT worksheet: {e.reason}"})
+    return {"spec": spec}
+
+
+class GtGenerateRequest(BaseModel):
+    spec: dict
+    quality: Quality = "medium"
+
+
+@app.post("/api/gt/generate")
+def gt_generate(req: GtGenerateRequest) -> dict:
+    try:
+        return gt_lib.generate_gt_pair(req.spec, quality=req.quality)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": f"invalid spec: {e}"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": f"image generation failed: {e}"})
 
 
 from fastapi.staticfiles import StaticFiles
