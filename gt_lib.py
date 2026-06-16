@@ -89,10 +89,10 @@ def _openai_client() -> OpenAI:
 
 
 def resolve_profile(test: str | None) -> dict:
-    key = (test or DEFAULT_PROFILE).strip().lower()
+    name = (test or "").strip()
+    key = name.lower() or DEFAULT_PROFILE
     if key in PROFILES:
         return {"id": key, **PROFILES[key]}
-    name = (test or "").strip()
     return {
         "id": "custom",
         "label": name,
