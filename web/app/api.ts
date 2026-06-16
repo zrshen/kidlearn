@@ -231,7 +231,9 @@ export type GtGenerateResult =
   | { ok: false; kind: "error"; message: string }
   | { ok: false; kind: "cancelled" };
 
-function toGtPair(raw: { id: string; theme?: string; test?: string; front_url: string; back_url: string }): GtPair {
+type GtPairRaw = { id: string; theme?: string; test?: string; front_url: string; back_url: string };
+
+function toGtPair(raw: GtPairRaw): GtPair {
   return {
     id: raw.id,
     theme: raw.theme ?? "",
@@ -259,7 +261,7 @@ export async function generateGt(
     return { ok: false, kind: "error", message: "Could not reach server. Is the backend running?" };
   }
   if (r.status === 200) {
-    const j = (await r.json()) as { id: string; theme?: string; test?: string; front_url: string; back_url: string };
+    const j = (await r.json()) as GtPairRaw;
     return { ok: true, pair: toGtPair(j) };
   }
   const j = (await r.json().catch(() => ({}))) as { error?: string };
@@ -291,12 +293,12 @@ export async function batchGt(
     return { ok: false, message: "Could not reach server. Is the backend running?", completed: [] };
   }
   if (r.status === 200) {
-    const j = (await r.json()) as { batches: { id: string; theme?: string; test?: string; front_url: string; back_url: string }[] };
+    const j = (await r.json()) as { batches: GtPairRaw[] };
     return { ok: true, batches: j.batches.map(toGtPair) };
   }
   const j = (await r.json().catch(() => ({}))) as {
     error?: string;
-    completed?: { id: string; theme?: string; test?: string; front_url: string; back_url: string }[];
+    completed?: GtPairRaw[];
   };
   return { ok: false, message: j.error ?? `server ${r.status}`, completed: (j.completed ?? []).map(toGtPair) };
 }
@@ -307,7 +309,7 @@ export async function fetchGtGenerated(): Promise<GtHistoryEntry[]> {
   const r = await fetch(`${API}/api/gt/generated`);
   if (!r.ok) throw new Error(`gt-generated ${r.status}`);
   const j = (await r.json()) as {
-    items: { id: string; theme: string; test: string; front_url: string; back_url: string; mtime: number }[];
+    items: (GtPairRaw & { mtime: number })[];
   };
   return j.items.map((e) => ({ ...toGtPair(e), mtime: e.mtime }));
 }
