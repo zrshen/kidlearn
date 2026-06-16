@@ -65,6 +65,21 @@ describe("GtView", () => {
     await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
     await waitFor(() => expect(body?.test).toBe("Iowa Assessments"));
   });
+
+  it("displays a pair passed in via selectedPair (history selection)", async () => {
+    const pair = {
+      id: "ocean-1",
+      theme: "ocean",
+      test: "CogAT",
+      frontUrl: "http://x/gt-ocean-1-front.png",
+      backUrl: "http://x/gt-ocean-1-back.png",
+    };
+    render(<GtView topic="" quality="medium" selectedPair={pair} />);
+    await waitFor(() => {
+      expect((screen.getByTestId("gt-front") as HTMLImageElement).src).toMatch(/gt-ocean-1-front\.png/);
+      expect((screen.getByTestId("gt-back") as HTMLImageElement).src).toMatch(/gt-ocean-1-back\.png/);
+    });
+  });
 });
 
 describe("worksheet type switcher", () => {

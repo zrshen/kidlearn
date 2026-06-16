@@ -13,7 +13,7 @@ const TEST_BUILTINS = [
   { id: "olsat", label: "OLSAT" },
 ];
 
-export function GtView({ topic, quality }: { topic: string; quality: Quality }) {
+export function GtView({ topic, quality, selectedPair = null }: { topic: string; quality: Quality; selectedPair?: GtPair | null }) {
   const [spec, setSpec] = useState<GtSpec | null>(null);
   const [pair, setPair] = useState<GtPair | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,6 +30,15 @@ export function GtView({ topic, quality }: { topic: string; quality: Quality }) 
     abortRef.current = ctrl;
     return ctrl.signal;
   }
+
+  useEffect(() => {
+    if (selectedPair) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPair(selectedPair);
+      setSpec(null);
+      setBanner({ kind: "none" });
+    }
+  }, [selectedPair]);
 
   async function handleGenerate() {
     setBanner({ kind: "none" });

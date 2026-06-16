@@ -45,7 +45,7 @@ export default function Page() {
   const [usedLoaded, setUsedLoaded] = useState(false);
   const [mode, setMode] = useState<WorksheetType>("flashcard");
   const [gtHistory, setGtHistory] = useState<GtHistoryEntry[]>([]);
-  const [gtSelectedId, setGtSelectedId] = useState<string | null>(null);
+  const [gtSelected, setGtSelected] = useState<GtHistoryEntry | null>(null);
 
   const busy = generating || suggesting || batching;
   const elapsed = useElapsedSeconds(busy);
@@ -212,16 +212,16 @@ export default function Page() {
           }}
         />
       ) : (
-        <GtHistorySidebar entries={gtHistory} selectedId={gtSelectedId} onSelect={(e) => setGtSelectedId(e.id)} />
+        <GtHistorySidebar entries={gtHistory} selectedId={gtSelected?.id ?? null} onSelect={(e) => setGtSelected(e)} />
       )}
       <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
         <WorksheetTypeSwitcher value={mode} onChange={setMode} />
         <header className="mb-10">
           <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.035em] text-ink">
-            Create a <span className="grad-title">flashcard worksheet</span>
+            Create a <span className="grad-title">{mode === "gt" ? "GT thinking worksheet" : "flashcard worksheet"}</span>
           </h1>
           <p className="mt-2 max-w-xl text-[0.95rem] text-ink-soft">
-            Six K-level words on one printable page. Suggest from a topic or type your own.
+            {mode === "gt" ? "Six reasoning panels per sheet — front questions, back answer key. Pick a topic and test focus." : "Six K-level words on one printable page. Suggest from a topic or type your own."}
           </p>
         </header>
 
@@ -231,7 +231,7 @@ export default function Page() {
         </div>
 
         {mode === "gt" ? (
-          <GtView topic={topic} quality={quality} />
+          <GtView topic={topic} quality={quality} selectedPair={gtSelected} />
         ) : (
           <>
             {imageUrl && (
