@@ -132,6 +132,36 @@ def gt_generate(req: GtGenerateRequest) -> dict:
         raise HTTPException(status_code=500, detail={"error": f"image generation failed: {e}"})
 
 
+class GtBatchRequest(BaseModel):
+    topic: Annotated[str | None, Field(default=None, max_length=100)] = None
+    test: Annotated[str | None, Field(default=None, max_length=60)] = None
+    n: Annotated[int, Field(ge=1, le=10)]
+    quality: Quality = "medium"
+
+
+@app.post("/api/gt/batch")
+def gt_batch(req: GtBatchRequest) -> dict:
+    try:
+        completed = gt_lib.batch_generate_gt(n=req.n, topic=req.topic, test=req.test, quality=req.quality)
+    except gt_lib.PartialBatchError as e:
+        raise HTTPException(status_code=502, detail={"error": e.reason, "completed": e.completed})
+    return {"batches": completed}
+
+
+@app.get("/api/gt/generated")
+def gt_generated() -> dict:
+    return {"items": gt_lib.list_gt_pairs()}
+
+
+class GtDeleteRequest(BaseModel):
+    ids: Annotated[list[str], Field(min_length=1, max_length=100)]
+
+
+@app.post("/api/gt/generated/delete")
+def gt_delete(req: GtDeleteRequest) -> dict:
+    return gt_lib.delete_gt(req.ids)
+
+
 from fastapi.staticfiles import StaticFiles
 
 flashcard_lib.GENERATED_DIR.mkdir(parents=True, exist_ok=True)
