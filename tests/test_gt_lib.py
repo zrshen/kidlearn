@@ -270,3 +270,9 @@ def test_delete_gt_removes_pngs_and_manifest(gt_gen_dir, monkeypatch):
 
 def test_delete_gt_ignores_unknown_id(gt_gen_dir):
     assert gt_lib.delete_gt(["does-not-exist"]) == {"deleted": []}
+
+
+def test_delete_gt_rejects_unsafe_ids(gt_gen_dir):
+    # Path-traversal / out-of-grammar ids are silently skipped, never deleted.
+    out = gt_lib.delete_gt(["../secret", "BAD", "a/b", ".."])
+    assert out == {"deleted": []}

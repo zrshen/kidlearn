@@ -347,8 +347,8 @@ def list_gt_pairs() -> list[dict]:
                 "id": m.get("id", mp.stem.removeprefix("gt-")),
                 "theme": m.get("theme", ""),
                 "test": m.get("test", ""),
-                "front_url": f"/generated/{m['front']}",
-                "back_url": f"/generated/{m['back']}",
+                "front_url": f"/generated/{m.get('front', '')}",
+                "back_url": f"/generated/{m.get('back', '')}",
                 "mtime": mp.stat().st_mtime,
             }
         )
