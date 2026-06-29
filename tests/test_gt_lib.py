@@ -181,6 +181,58 @@ def test_both_prompts_contain_every_heading_and_question():
         assert p["question"] in front and p["question"] in back
 
 
+import random as _random
+
+
+def _suggest_prompt(topic=None, test=None, seed=1) -> str:
+    profile = gt_lib.resolve_profile(test)
+    with patch.object(gt_lib, "random", _random.Random(seed)):
+        msgs = gt_lib._build_suggest_messages(topic, profile)
+    return "\n".join(m["content"] for m in msgs)
+
+
+def test_suggest_prompt_injects_variety_levers():
+    prompt = _suggest_prompt()
+    assert "Variation seed: #" in prompt
+    assert "VARIETY IS REQUIRED" in prompt
+    # The anti-cliché directive names the tired examples to avoid.
+    assert "bird→nest" in prompt
+    assert "one per panel, in this order:" in prompt
+
+
+def test_suggest_prompt_differs_across_seeds():
+    # Different variation seeds → different prompts (randomized each call).
+    assert _suggest_prompt(seed=1) != _suggest_prompt(seed=2)
+
+
+def test_suggest_prompt_requests_detailed_scene():
+    prompt = _suggest_prompt()
+    assert "scene:" in prompt.lower()
+    assert "DETAILED description" in prompt
+
+
+def test_suggest_reasoning_effort_is_medium():
+    assert gt_lib.SUGGEST_REASONING_EFFORT == "medium"
+    client = _stub_chat(json.dumps(_spec()))
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        gt_lib.suggest_gt_spec(topic=None)
+    assert client.chat.completions.create.call_args.kwargs["reasoning_effort"] == "medium"
+
+
+def test_scene_reaches_image_prompts_without_leaking_answer():
+    scene = "three orange pumpkins in a row, a purple star above the middle one"
+    panels = [_panel(scene=scene, answer="B — the star; circle choice B")]
+    panels += [_panel(t) for t in list(gt_lib.GENERAL_CATALOG)[:5]]
+    spec = _spec(panels=panels)
+    front = gt_lib.render_front_prompt(spec)
+    back = gt_lib.render_back_prompt(spec)
+    # Detailed scene is fed to BOTH images so the picture matches the design.
+    assert scene in front and scene in back
+    # The answer/mark still appears only on the back.
+    assert "circle choice B" not in front
+    assert "circle choice B" in back
+
+
 PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"stub"
 
 

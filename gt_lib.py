@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -115,8 +116,33 @@ def validate_spec(spec: dict) -> dict:
 
 
 SUGGEST_MODEL = "gpt-5.5"
-SUGGEST_REASONING_EFFORT = "low"
+SUGGEST_REASONING_EFFORT = "medium"
 SUGGEST_MAX_RETRIES = 3
+
+# Untopic'd worksheets rotate through these so unspecified-topic batches differ.
+THEME_POOL = [
+    "ocean animals", "jungle animals", "farm animals", "bugs & insects",
+    "dinosaurs", "outer space", "weather & seasons", "fruits & vegetables",
+    "vehicles", "musical instruments", "sports & games", "the playground",
+    "birds", "things in a kitchen", "the garden", "winter wonderland",
+    "construction site", "under the sea", "pets", "things that fly",
+]
+
+# Random "inspiration" cues nudge the model away from its default examples.
+INSPIRATION_CUES = [
+    "unusual color palettes", "playful asymmetry", "unexpected objects",
+    "varied counts and quantities", "different spatial arrangements",
+    "fresh everyday items", "bold primary colors", "soft pastel colors",
+    "nature scenes", "household objects", "shapes in motion", "seasonal motifs",
+]
+
+# Tired textbook examples the model keeps defaulting to — forbid them by name.
+CLICHES_TO_AVOID = (
+    "a repeating red-circle / blue-square pattern; "
+    "the bird→nest / dog→doghouse analogy; "
+    "an apple/banana/orange + teddy-bear odd-one-out; "
+    "a giraffe-is-tallest compare"
+)
 
 
 class SuggestionError(Exception):
@@ -126,37 +152,61 @@ class SuggestionError(Exception):
 
 
 def _build_suggest_messages(topic: str | None, profile: dict) -> list[dict]:
-    catalog_lines = "\n".join(f"- {k}: {v}" for k, v in profile["catalog"].items())
-    theme_rule = (
-        f'Theme every panel around: "{topic}".'
-        if topic and topic.strip()
-        else "Pick ONE cohesive kid-friendly theme (animals, food, shapes, weather) for all panels."
-    )
+    catalog = profile["catalog"]
+    catalog_lines = "\n".join(f"- {k}: {v}" for k, v in catalog.items())
+
+    # --- Variety levers (per-call randomization) ---
+    keys = list(catalog)
+    chosen = random.sample(keys, min(6, len(keys)))
+    chosen_line = ", ".join(chosen)
+    nonce = random.randint(1000, 9999)
+    cues = ", ".join(random.sample(INSPIRATION_CUES, 3))
+
+    if topic and topic.strip():
+        theme_rule = f'Theme every panel around: "{topic}".'
+    else:
+        theme_rule = f'Pick ONE cohesive kid-friendly theme for all panels — use: "{random.choice(THEME_POOL)}".'
+
     system = (
         "You design Kindergarten gifted-and-talented thinking worksheets. "
         "Respond with JSON only."
     )
     user = f"""Design ONE Kindergarten worksheet, {profile['framing']}, with EXACTLY 6 panels.
 
-Choose 6 DISTINCT panel types. Prefer these subtypes for this test (use the keys verbatim
-when they apply; for a custom test you may use that test's own subtype names):
+These are the available subtypes for this test (descriptions for reference):
 {catalog_lines}
 
+Build the 6 panels using these subtypes, one per panel, in this order: {chosen_line}.
+If fewer than 6 subtypes are listed, add more panels from the catalog above, but make
+their pictures, objects, and answers completely different from the earlier panels.
+(For a custom test you may use that test's own subtype names.)
+
 {theme_rule}
+
+VARIETY IS REQUIRED. Variation seed: #{nonce} — treat this as a directive to diverge
+from your default go-to examples; lean into {cues}.
+- Do NOT use these tired textbook examples: {CLICHES_TO_AVOID}.
+- Invent fresh, specific objects, colors, counts, and relationships, and make every
+  panel visibly different from the others (vary the objects, colors, and quantities).
 
 For each panel provide:
 - type: a short subtype key (snake_case)
 - heading: short title (e.g. "Picture Analogies")
 - question: the question a child reads
+- scene: a DETAILED description of exactly what to draw for the question state —
+  the specific objects with their colors, quantities, and positions; the grid /
+  sequence / matrix layout; where the blank goes; and what each A/B/C choice picture
+  shows. Describe the QUESTION ONLY — do NOT reveal or mark the correct answer here.
 - items: list of picture words to draw (or [] if none)
-- choices: list like ["A = red circle", "B = blue square"] (or [] if none)
+- choices: list like ["A = three red apples", "B = two green pears"] (or [] if none)
 - instruction: short bottom instruction
-- answer: the correct answer stated clearly (e.g. "B (doghouse)")
+- answer: the correct choice stated clearly AND how to mark it on the answer key
+  (e.g. "B — the doghouse; circle choice B")
 - explanation: short reason (or "" if none)
 
 Rules:
 - Everything must be K-level, age-appropriate, and visual.
-- The answer MUST be correct and consistent with the question.
+- The answer MUST be correct and consistent with the question and the scene.
 - Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...6 panels... ]}}
 """
     return [
@@ -212,6 +262,8 @@ def _panel_block(p: dict, *, reveal: bool) -> str:
         f"Panel: {p['heading']} (type: {p['type']})",
         f"Question: {p['question']}",
     ]
+    if str(p.get("scene", "")).strip():
+        lines.append(f"Scene (draw exactly this): {p['scene']}")
     if p.get("items"):
         lines.append("Pictures: " + ", ".join(p["items"]))
     if p.get("choices"):
@@ -331,7 +383,12 @@ def batch_generate_gt(n: int, topic: str | None, test: str | None = None, qualit
             pair = generate_gt_pair(spec, quality=quality)
         except Exception as e:
             raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
-        completed.append({**pair, "theme": str(spec.get("theme", "")), "test": str(spec.get("test", ""))})
+        completed.append({
+            **pair,
+            "theme": str(spec.get("theme", "")),
+            "test": str(spec.get("test", "")),
+            "spec": spec,
+        })
     return completed
 
 
@@ -349,6 +406,7 @@ def list_gt_pairs() -> list[dict]:
                 "test": m.get("test", ""),
                 "front_url": f"/generated/{m.get('front', '')}",
                 "back_url": f"/generated/{m.get('back', '')}",
+                "spec": m.get("spec"),
                 "mtime": mp.stat().st_mtime,
             }
         )
