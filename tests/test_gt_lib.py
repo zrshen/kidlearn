@@ -146,6 +146,19 @@ def test_suggest_gt_spec_retries_then_raises_on_bad_json():
     assert client.chat.completions.create.call_count == gt_lib.SUGGEST_MAX_RETRIES + 1
 
 
+def test_suggest_gt_spec_retries_then_raises_on_transient_api_error():
+    from openai import OpenAIError
+
+    client = MagicMock()
+    client.chat.completions.create.side_effect = OpenAIError("rate limited")
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(gt_lib.SuggestionError):
+            gt_lib.suggest_gt_spec(topic=None)
+    # Transient errors are retried (not raised raw) and then surfaced as a
+    # friendly SuggestionError that the endpoint maps to a 502.
+    assert client.chat.completions.create.call_count == gt_lib.SUGGEST_MAX_RETRIES + 1
+
+
 def test_suggest_gt_spec_stub_mode_skips_openai(monkeypatch):
     monkeypatch.setenv("GT_STUB_SPEC", str(Path("tests/fixtures/gt_spec_stub.json").resolve()))
     crash = MagicMock()

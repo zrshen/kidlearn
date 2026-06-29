@@ -8,7 +8,7 @@ import re
 import time
 from pathlib import Path
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
 
@@ -244,6 +244,11 @@ def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
             return _finalize_spec(json.loads(content), profile)
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             last_reason = f"could not parse model response: {e}"
+            continue
+        except OpenAIError as e:
+            # Transient API/network errors (rate limit, timeout, connection):
+            # retry, and surface as a friendly SuggestionError if they persist.
+            last_reason = f"model request failed: {e}"
             continue
     raise SuggestionError(last_reason)
 

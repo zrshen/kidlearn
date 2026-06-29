@@ -111,8 +111,10 @@ body {
     page-break-inside: avoid;
   }
 
-  /* GT: two pages (front, then back). Hides everything except the print portal. */
-  body.gt-mode > *:not(.gt-print-target) { display: none !important; }
+  /* GT: two pages (front, then back). Hides everything except the print portal,
+     but only when a print target exists (a worksheet is loaded) — otherwise
+     native Cmd/Ctrl+P would blank the page with nothing to print. */
+  body.gt-mode:has(.gt-print-target) > *:not(.gt-print-target) { display: none !important; }
   body.gt-mode .gt-print-target { display: block !important; }
   body.gt-mode .gt-print-target .pg {
     display: flex;

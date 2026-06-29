@@ -66,11 +66,15 @@ export function GtView({
 
   useEffect(() => {
     if (selectedPair) {
+      // Picking a history worksheet supersedes any in-flight generation, so it
+      // can't resolve later and overwrite the selection. We own busy now.
+      abortRef.current?.abort();
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPair(selectedPair);
       setSpec(selectedPair.spec ?? null);
       setBatchPairs([]);
       setBanner({ kind: "none" });
+      setBusy(false);
     }
   }, [selectedPair]);
 
@@ -102,14 +106,16 @@ export function GtView({
     setBusy(true);
     const signal = startWork();
     const sug = await suggestGt(topic.trim() || null, effectiveTest, signal);
+    // Superseded by a newer click or a history selection — that path owns busy.
+    if (signal.aborted) return;
     if (!sug.ok) {
       setBusy(false);
-      if ("cancelled" in sug) return;
-      setBanner({ kind: "error", message: sug.message });
+      if (!("cancelled" in sug)) setBanner({ kind: "error", message: sug.message });
       return;
     }
     setSpec(sug.spec);
     const gen = await generateGt(sug.spec, quality, signal);
+    if (signal.aborted) return;
     setBusy(false);
     if (gen.ok) {
       setPair(gen.pair);
@@ -128,13 +134,13 @@ export function GtView({
     setPendingBatchConfirm(false);
     const signal = startWork();
     const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), quality, signal);
+    // Superseded by a newer click or a history selection — that path owns busy.
+    if (signal.aborted) return;
     setBusy(false);
     if (res.ok) {
       setBatchPairs(res.batches);
       onGenerated?.();
-    } else if ("cancelled" in res) {
-      return;
-    } else {
+    } else if (!("cancelled" in res)) {
       setBanner({ kind: "error", message: res.message });
       if (res.completed.length > 0) {
         setBatchPairs(res.completed);
