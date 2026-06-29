@@ -68,7 +68,7 @@ export function BatchControls({
           type="number"
           min={MIN}
           max={MAX}
-          value={n}
+          value={Number.isNaN(n) ? "" : n}
           onChange={(e) => setN(parseInt(e.target.value, 10))}
           className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent"
         />
@@ -90,7 +90,7 @@ export function BatchControls({
             type="button"
             onClick={() => void doRequest()}
             disabled={busy}
-            className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-on-primary transition-colors hover:bg-accent disabled:opacity-50"
           >
             Confirm
           </button>

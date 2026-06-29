@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
-import { generateGt, suggestGt, type GtPair, type GtSpec, type Quality } from "../app/api";
+import { batchGt, generateGt, suggestGt, type GtPair, type GtSpec, type Quality } from "../app/api";
 
 type Banner = { kind: "none" } | { kind: "error"; message: string };
+type PrintScope = "both" | "front";
 
 const TEST_BUILTINS = [
   { id: "general", label: "General GT" },
@@ -13,16 +14,43 @@ const TEST_BUILTINS = [
   { id: "olsat", label: "OLSAT" },
 ];
 
-export function GtView({ topic, quality, selectedPair = null }: { topic: string; quality: Quality; selectedPair?: GtPair | null }) {
+const BATCH_MIN = 1;
+const BATCH_MAX = 10;
+const BATCH_CONFIRM_THRESHOLD = 3;
+
+export function GtView({
+  topic,
+  quality,
+  selectedPair = null,
+  deletedId = null,
+  onGenerated,
+}: {
+  topic: string;
+  quality: Quality;
+  selectedPair?: GtPair | null;
+  deletedId?: string | null;
+  onGenerated?: () => void;
+}) {
   const [spec, setSpec] = useState<GtSpec | null>(null);
   const [pair, setPair] = useState<GtPair | null>(null);
+  const [batchPairs, setBatchPairs] = useState<GtPair[]>([]);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
   const [builtinTest, setBuiltinTest] = useState("general");
   const [customTest, setCustomTest] = useState("");
+  const [batchN, setBatchN] = useState(1);
+  const [pendingBatchConfirm, setPendingBatchConfirm] = useState(false);
+  const [printScope, setPrintScope] = useState<PrintScope>("both");
+  const [printNonce, setPrintNonce] = useState(0);
   const effectiveTest = customTest.trim() || builtinTest;
   const usingCustom = customTest.trim().length > 0;
   const abortRef = useRef<AbortController | null>(null);
+
+  // Mirror the displayed pair in a ref so the delete effect can read it
+  // without re-running when the pair changes.
+  const pairRef = useRef<GtPair | null>(null);
+  // eslint-disable-next-line react-hooks/refs
+  pairRef.current = pair;
 
   function startWork(): AbortSignal {
     abortRef.current?.abort();
@@ -31,19 +59,46 @@ export function GtView({ topic, quality, selectedPair = null }: { topic: string;
     return ctrl.signal;
   }
 
+  function clampedBatchN(): number {
+    if (Number.isNaN(batchN)) return BATCH_MIN;
+    return Math.max(BATCH_MIN, Math.min(BATCH_MAX, Math.trunc(batchN)));
+  }
+
   useEffect(() => {
     if (selectedPair) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPair(selectedPair);
-      setSpec(null);
+      setSpec(selectedPair.spec ?? null);
+      setBatchPairs([]);
       setBanner({ kind: "none" });
     }
   }, [selectedPair]);
+
+  // Clear the on-screen worksheet if the pair currently shown was deleted.
+  useEffect(() => {
+    if (deletedId && pairRef.current?.id === deletedId) {
+      setPair(null);
+      setSpec(null);
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBatchPairs((prev) => prev.filter((p) => p.id !== deletedId));
+  }, [deletedId]);
+
+  // Trigger the print dialog after the portal re-renders for the chosen scope.
+  useEffect(() => {
+    if (printNonce > 0) window.print();
+  }, [printNonce]);
+
+  function printScoped(scope: PrintScope) {
+    setPrintScope(scope);
+    setPrintNonce((n) => n + 1);
+  }
 
   async function handleGenerate() {
     setBanner({ kind: "none" });
     setPair(null);
     setSpec(null);
+    setBatchPairs([]);
     setBusy(true);
     const signal = startWork();
     const sug = await suggestGt(topic.trim() || null, effectiveTest, signal);
@@ -56,8 +111,41 @@ export function GtView({ topic, quality, selectedPair = null }: { topic: string;
     setSpec(sug.spec);
     const gen = await generateGt(sug.spec, quality, signal);
     setBusy(false);
-    if (gen.ok) setPair(gen.pair);
-    else if (gen.kind === "error") setBanner({ kind: "error", message: gen.message });
+    if (gen.ok) {
+      setPair(gen.pair);
+      onGenerated?.();
+    } else if (gen.kind === "error") {
+      setBanner({ kind: "error", message: gen.message });
+    }
+  }
+
+  async function runBatch() {
+    setBanner({ kind: "none" });
+    setPair(null);
+    setSpec(null);
+    setBatchPairs([]);
+    setBusy(true);
+    setPendingBatchConfirm(false);
+    const signal = startWork();
+    const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), quality, signal);
+    setBusy(false);
+    if (res.ok) {
+      setBatchPairs(res.batches);
+      onGenerated?.();
+    } else if ("cancelled" in res) {
+      return;
+    } else {
+      setBanner({ kind: "error", message: res.message });
+      if (res.completed.length > 0) {
+        setBatchPairs(res.completed);
+        onGenerated?.();
+      }
+    }
+  }
+
+  function handleBatchClick() {
+    if (clampedBatchN() >= BATCH_CONFIRM_THRESHOLD) setPendingBatchConfirm(true);
+    else void runBatch();
   }
 
   return (
@@ -76,7 +164,7 @@ export function GtView({ topic, quality, selectedPair = null }: { topic: string;
               aria-pressed={!usingCustom && builtinTest === b.id}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
                 !usingCustom && builtinTest === b.id
-                  ? "bg-ink text-white"
+                  ? "bg-primary text-on-primary"
                   : "border border-border text-ink-soft hover:bg-border hover:text-ink"
               }`}
             >
@@ -100,20 +188,74 @@ export function GtView({ topic, quality, selectedPair = null }: { topic: string;
           type="button"
           onClick={handleGenerate}
           disabled={busy}
-          className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-on-primary transition-colors hover:bg-accent disabled:opacity-50"
         >
           {busy ? "Working…" : "Suggest & Generate"}
         </button>
+        <span className="mx-1 h-4 w-px bg-border" />
+        <label className="flex items-center gap-1.5 text-ink-soft">
+          <span className="text-sm">Batches</span>
+          <input
+            type="number"
+            min={BATCH_MIN}
+            max={BATCH_MAX}
+            value={Number.isNaN(batchN) ? "" : batchN}
+            onChange={(e) => setBatchN(parseInt(e.target.value, 10))}
+            aria-label="Batches"
+            className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={handleBatchClick}
+          disabled={busy || pendingBatchConfirm}
+          className="rounded-md px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-soft"
+        >
+          {busy ? "Generating…" : "Batch Generate"}
+        </button>
         {pair && (
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
-          >
-            Print both
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => printScoped("both")}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
+            >
+              Print both
+            </button>
+            <button
+              type="button"
+              onClick={() => printScoped("front")}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
+            >
+              Print questions
+            </button>
+          </>
         )}
       </div>
+
+      {pendingBatchConfirm && (
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm shadow-card-sm">
+          <span className="text-ink-soft">
+            Generate {clampedBatchN()} GT worksheets? Each uses OpenAI image credits.
+          </span>
+          <button
+            type="button"
+            onClick={() => void runBatch()}
+            disabled={busy}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-on-primary transition-colors hover:bg-accent disabled:opacity-50"
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            onClick={() => setPendingBatchConfirm(false)}
+            disabled={busy}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {banner.kind === "error" && (
         <div className="mb-5">
@@ -130,7 +272,17 @@ export function GtView({ topic, quality, selectedPair = null }: { topic: string;
         </div>
       )}
 
-      {pair && <GtPrintPortal frontUrl={pair.frontUrl} backUrl={pair.backUrl} />}
+      {batchPairs.length > 0 && (
+        <GtBatchPreview
+          pairs={batchPairs}
+          onSelect={(p) => {
+            setPair(p);
+            setSpec(p.spec ?? null);
+          }}
+        />
+      )}
+
+      {pair && <GtPrintPortal frontUrl={pair.frontUrl} backUrl={pair.backUrl} scope={printScope} />}
     </section>
   );
 }
@@ -159,7 +311,7 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
         <span className="label-eyebrow">{label}</span>
         <span
           className={`rounded-full px-2.5 py-0.5 font-mono text-[0.64rem] font-semibold ${
-            tone === "front" ? "bg-accent-soft text-accent-strong" : "bg-[#ecfdf3] text-[#15803d]"
+            tone === "front" ? "bg-accent-soft text-accent-strong" : "bg-success-soft text-success-ink"
           }`}
         >
           {tone === "front" ? "FRONT" : "BACK"}
@@ -170,8 +322,46 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
   );
 }
 
-function GtPrintPortal({ frontUrl, backUrl }: { frontUrl: string; backUrl: string }) {
+function GtBatchPreview({ pairs, onSelect }: { pairs: GtPair[]; onSelect: (p: GtPair) => void }) {
+  return (
+    <div className="mb-8 border-t border-border pt-6">
+      <p className="label-eyebrow mb-3">Worksheets in this set · {pairs.length}</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {pairs.map((p, i) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onSelect(p)}
+            className="group overflow-hidden rounded-xl border border-border bg-surface text-left shadow-card-sm transition-colors hover:border-border-strong"
+            data-testid={`gt-batch-${i}`}
+          >
+            <div className="relative aspect-[3/2] bg-bg">
+              <img
+                src={p.frontUrl}
+                alt={p.theme || `worksheet ${i + 1}`}
+                loading="lazy"
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            </div>
+            <span className="flex items-center justify-between gap-2 px-2.5 py-2">
+              <span className="truncate text-[0.8rem] font-medium text-ink">{p.theme || p.id}</span>
+              {p.test ? (
+                <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-px font-mono text-[0.55rem] font-semibold text-accent-strong">
+                  {p.test}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GtPrintPortal({ frontUrl, backUrl, scope }: { frontUrl: string; backUrl: string; scope: PrintScope }) {
   const [mounted, setMounted] = useState(false);
+  // Portal mounts to document.body only after client hydration.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
   if (!mounted) return null;
   return createPortal(
@@ -179,9 +369,11 @@ function GtPrintPortal({ frontUrl, backUrl }: { frontUrl: string; backUrl: strin
       <div className="pg">
         <img src={frontUrl} alt="" />
       </div>
-      <div className="pg">
-        <img src={backUrl} alt="" />
-      </div>
+      {scope === "both" && (
+        <div className="pg">
+          <img src={backUrl} alt="" />
+        </div>
+      )}
     </div>,
     document.body,
   );

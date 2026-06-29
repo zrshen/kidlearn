@@ -11,7 +11,7 @@ const ENTRIES: GtHistoryEntry[] = [
 
 describe("GtHistorySidebar", () => {
   it("renders a pair per entry with test/theme labels and FRONT/BACK badges", () => {
-    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={() => {}} />);
+    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={() => {}} onDelete={() => {}} />);
     expect(screen.getByText("fruits")).toBeInTheDocument();
     expect(screen.getByText("ocean")).toBeInTheDocument();
     expect(screen.getByText("CogAT")).toBeInTheDocument();
@@ -22,8 +22,16 @@ describe("GtHistorySidebar", () => {
   it("calls onSelect with the entry when clicked", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
-    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={onSelect} />);
+    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={onSelect} onDelete={() => {}} />);
     await user.click(screen.getByText("fruits"));
     expect(onSelect).toHaveBeenCalledWith(ENTRIES[0]);
+  });
+
+  it("calls onDelete with the entry id when the trash button is clicked", async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={() => {}} onDelete={onDelete} />);
+    await user.click(screen.getByRole("button", { name: /delete fruits/i }));
+    expect(onDelete).toHaveBeenCalledWith("fruits-1");
   });
 });

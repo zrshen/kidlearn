@@ -43,7 +43,7 @@ export function InputRows({
               <span
                 className={`inline-flex h-7 w-7 items-center justify-center rounded-md border font-mono text-[0.8rem] font-medium ${
                   isConflict
-                    ? "border-conflict-ink/30 bg-white text-conflict-ink"
+                    ? "border-conflict-ink/30 bg-surface text-conflict-ink"
                     : hasContent
                       ? "border-accent/20 bg-accent-soft text-accent"
                       : "border-border bg-bg text-ink-soft"

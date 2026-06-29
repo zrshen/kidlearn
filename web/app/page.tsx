@@ -10,9 +10,11 @@ import { UsedWordsSidebar } from "../components/UsedWordsSidebar";
 import { WorksheetTypeSwitcher, type WorksheetType } from "../components/WorksheetTypeSwitcher";
 import { GtView } from "../components/GtView";
 import { GtHistorySidebar } from "../components/GtHistorySidebar";
+import { ThemeToggle } from "../components/ThemeToggle";
 import {
   backfillGenerated,
   deleteGenerated,
+  deleteGt,
   fetchGenerated,
   fetchGtGenerated,
   fetchUsedWords,
@@ -46,6 +48,7 @@ export default function Page() {
   const [mode, setMode] = useState<WorksheetType>("flashcard");
   const [gtHistory, setGtHistory] = useState<GtHistoryEntry[]>([]);
   const [gtSelected, setGtSelected] = useState<GtHistoryEntry | null>(null);
+  const [gtDeletedId, setGtDeletedId] = useState<string | null>(null);
 
   const busy = generating || suggesting || batching;
   const elapsed = useElapsedSeconds(busy);
@@ -212,10 +215,27 @@ export default function Page() {
           }}
         />
       ) : (
-        <GtHistorySidebar entries={gtHistory} selectedId={gtSelected?.id ?? null} onSelect={(e) => setGtSelected(e)} />
+        <GtHistorySidebar
+          entries={gtHistory}
+          selectedId={gtSelected?.id ?? null}
+          onSelect={(e) => setGtSelected(e)}
+          onDelete={async (id) => {
+            await deleteGt([id]);
+            try {
+              setGtHistory(await fetchGtGenerated());
+            } catch {
+              /* keep stale */
+            }
+            if (gtSelected?.id === id) setGtSelected(null);
+            setGtDeletedId(id);
+          }}
+        />
       )}
       <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
-        <WorksheetTypeSwitcher value={mode} onChange={setMode} />
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <WorksheetTypeSwitcher value={mode} onChange={setMode} />
+          <ThemeToggle />
+        </div>
         <header className="mb-10">
           <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.035em] text-ink">
             Create a <span className="grad-title">{mode === "gt" ? "GT thinking worksheet" : "flashcard worksheet"}</span>
@@ -230,9 +250,25 @@ export default function Page() {
           <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
         </div>
 
-        {mode === "gt" ? (
-          <GtView topic={topic} quality={quality} selectedPair={gtSelected} />
-        ) : (
+        {/* GtView stays mounted (hidden when inactive) so an in-progress GT
+            generation isn't discarded when the user switches tabs. Flashcard
+            state lives here in the parent, so its branch can stay conditional. */}
+        <div hidden={mode !== "gt"}>
+          <GtView
+            topic={topic}
+            quality={quality}
+            selectedPair={gtSelected}
+            deletedId={gtDeletedId}
+            onGenerated={async () => {
+              try {
+                setGtHistory(await fetchGtGenerated());
+              } catch {
+                /* keep stale */
+              }
+            }}
+          />
+        </div>
+        {mode === "flashcard" && (
           <>
             {imageUrl && (
               <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
@@ -270,7 +306,7 @@ export default function Page() {
                 type="button"
                 onClick={handleGenerate}
                 disabled={busy}
-                className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-ink"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-on-primary transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-primary"
               >
                 {generateLabel}
                 <span
@@ -300,7 +336,7 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={cancelWork}
-                  className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
+                  className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-danger hover:text-white"
                 >
                   Cancel
                 </button>
@@ -414,6 +450,7 @@ function useElapsedSeconds(active: boolean): number {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     if (!active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setElapsed(0);
       return;
     }

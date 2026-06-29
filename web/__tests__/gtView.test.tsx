@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GtView } from "../components/GtView";
 import Page from "../app/page";
 
@@ -64,6 +64,26 @@ describe("GtView", () => {
     await user.type(screen.getByLabelText(/other test/i), "Iowa Assessments");
     await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
     await waitFor(() => expect(body?.test).toBe("Iowa Assessments"));
+  });
+
+  it("renders batch thumbnails after Batch Generate", async () => {
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId("gt-batch-0")).toBeInTheDocument();
+    });
+  });
+
+  it("prints questions only when Print questions is clicked", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await screen.findByTestId("gt-front");
+    await user.click(screen.getByRole("button", { name: /print questions/i }));
+    expect(printSpy).toHaveBeenCalled();
+    printSpy.mockRestore();
   });
 
   it("displays a pair passed in via selectedPair (history selection)", async () => {

@@ -224,14 +224,14 @@ export async function suggestGt(
   return { ok: false, message: j.error ?? `server ${r.status}` };
 }
 
-export type GtPair = { id: string; theme: string; test: string; frontUrl: string; backUrl: string };
+export type GtPair = { id: string; theme: string; test: string; frontUrl: string; backUrl: string; spec?: GtSpec | null };
 
 export type GtGenerateResult =
   | { ok: true; pair: GtPair }
   | { ok: false; kind: "error"; message: string }
   | { ok: false; kind: "cancelled" };
 
-type GtPairRaw = { id: string; theme?: string; test?: string; front_url: string; back_url: string };
+type GtPairRaw = { id: string; theme?: string; test?: string; front_url: string; back_url: string; spec?: GtSpec | null };
 
 function toGtPair(raw: GtPairRaw): GtPair {
   return {
@@ -240,6 +240,7 @@ function toGtPair(raw: GtPairRaw): GtPair {
     test: raw.test ?? "",
     frontUrl: `${API}${raw.front_url}`,
     backUrl: `${API}${raw.back_url}`,
+    spec: raw.spec ?? null,
   };
 }
 

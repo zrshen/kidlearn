@@ -15,12 +15,41 @@
   --color-danger: #dc2626;
   --color-conflict-bg: #fff1f2;
   --color-conflict-ink: #b91c1c;
+  --color-primary: #111111;
+  --color-on-primary: #ffffff;
+  --color-success-soft: #ecfdf3;
+  --color-success-ink: #15803d;
 
   --font-sans: var(--font-sans-base), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-base), ui-monospace, SFMono-Regular, monospace;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* Dark theme: override the semantic tokens. Higher specificity than the
+   @theme-generated :root so it reliably wins. Components stay theme-agnostic. */
+:root.dark {
+  --color-bg: #0c0c0e;
+  --color-surface: #161619;
+  --color-border: #26262b;
+  --color-border-strong: #3a3a42;
+  --color-ink: #f4f4f5;
+  --color-ink-soft: #a1a1aa;
+  --color-ink-faint: #71717a;
+  --color-accent: #8987ff;
+  --color-accent-strong: #a5a3ff;
+  --color-accent-soft: rgba(137, 135, 255, 0.16);
+  --color-success: #4ade80;
+  --color-danger: #ef4444;
+  --color-conflict-bg: #2a1416;
+  --color-conflict-ink: #fca5a5;
+  --color-primary: #5e5cff;
+  --color-on-primary: #ffffff;
+  --color-success-soft: rgba(74, 222, 128, 0.16);
+  --color-success-ink: #4ade80;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 body {

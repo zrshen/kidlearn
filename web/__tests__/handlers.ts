@@ -16,4 +16,20 @@ export const handlers = [
     HttpResponse.json({ id: "fruits-1", front_url: "/generated/gt-fruits-1-front.png", back_url: "/generated/gt-fruits-1-back.png" })
   ),
   http.get(`${API}/api/gt/generated`, () => HttpResponse.json({ items: [] })),
+  http.post(`${API}/api/gt/batch`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { n?: number };
+    const n = body.n ?? 1;
+    const batches = Array.from({ length: n }, (_, i) => ({
+      id: `fruits-${i + 1}`,
+      theme: "fruits",
+      test: "",
+      front_url: `/generated/gt-fruits-${i + 1}-front.png`,
+      back_url: `/generated/gt-fruits-${i + 1}-back.png`,
+    }));
+    return HttpResponse.json({ batches });
+  }),
+  http.post(`${API}/api/gt/generated/delete`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    return HttpResponse.json({ deleted: body.ids ?? [] });
+  }),
 ];
