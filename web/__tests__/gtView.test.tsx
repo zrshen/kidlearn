@@ -66,6 +66,23 @@ describe("GtView", () => {
     await waitFor(() => expect(body?.test).toBe("Iowa Assessments"));
   });
 
+  it("forwards the chosen panel count to /api/gt/suggest (defaults to 4)", async () => {
+    const { http, HttpResponse } = await import("msw");
+    const { mswServer } = await import("./setup");
+    let body: { panels: number | null } | null = null;
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/suggest", async ({ request }) => {
+        body = (await request.json()) as { panels: number | null };
+        return HttpResponse.json({ spec: { title: "t", theme: "x", panels: [] } });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<GtView topic="" quality="medium" />);
+    expect((screen.getByLabelText(/panels per worksheet/i) as HTMLInputElement).value).toBe("4");
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await waitFor(() => expect(body?.panels).toBe(4));
+  });
+
   it("renders batch thumbnails after Batch Generate", async () => {
     const user = userEvent.setup();
     render(<GtView topic="fruits" quality="low" />);

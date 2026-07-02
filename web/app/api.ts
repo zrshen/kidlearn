@@ -202,6 +202,7 @@ export type GtSuggestResult =
 export async function suggestGt(
   topic: string | null,
   test: string | null = null,
+  panels: number | null = null,
   signal?: AbortSignal,
 ): Promise<GtSuggestResult> {
   let r: Response;
@@ -209,7 +210,7 @@ export async function suggestGt(
     r = await fetch(`${API}/api/gt/suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, test }),
+      body: JSON.stringify({ topic, test, panels }),
       signal,
     });
   } catch (e) {
@@ -278,6 +279,7 @@ export async function batchGt(
   topic: string | null,
   test: string | null,
   n: number,
+  panels: number | null = null,
   quality: Quality = "medium",
   signal?: AbortSignal,
 ): Promise<GtBatchResult> {
@@ -286,7 +288,7 @@ export async function batchGt(
     r = await fetch(`${API}/api/gt/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, test, n, quality }),
+      body: JSON.stringify({ topic, test, n, panels, quality }),
       signal,
     });
   } catch (e) {

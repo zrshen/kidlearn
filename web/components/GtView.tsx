@@ -18,6 +18,10 @@ const BATCH_MIN = 1;
 const BATCH_MAX = 10;
 const BATCH_CONFIRM_THRESHOLD = 3;
 
+const PANELS_MIN = 4;
+const PANELS_MAX = 6;
+const PANELS_DEFAULT = 4;
+
 export function GtView({
   topic,
   quality,
@@ -39,6 +43,7 @@ export function GtView({
   const [builtinTest, setBuiltinTest] = useState("general");
   const [customTest, setCustomTest] = useState("");
   const [batchN, setBatchN] = useState(1);
+  const [panelCount, setPanelCount] = useState(PANELS_DEFAULT);
   const [pendingBatchConfirm, setPendingBatchConfirm] = useState(false);
   const [printScope, setPrintScope] = useState<PrintScope>("both");
   const [printNonce, setPrintNonce] = useState(0);
@@ -62,6 +67,11 @@ export function GtView({
   function clampedBatchN(): number {
     if (Number.isNaN(batchN)) return BATCH_MIN;
     return Math.max(BATCH_MIN, Math.min(BATCH_MAX, Math.trunc(batchN)));
+  }
+
+  function clampedPanels(): number {
+    if (Number.isNaN(panelCount)) return PANELS_DEFAULT;
+    return Math.max(PANELS_MIN, Math.min(PANELS_MAX, Math.trunc(panelCount)));
   }
 
   useEffect(() => {
@@ -105,7 +115,7 @@ export function GtView({
     setBatchPairs([]);
     setBusy(true);
     const signal = startWork();
-    const sug = await suggestGt(topic.trim() || null, effectiveTest, signal);
+    const sug = await suggestGt(topic.trim() || null, effectiveTest, clampedPanels(), signal);
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     if (!sug.ok) {
@@ -133,7 +143,7 @@ export function GtView({
     setBusy(true);
     setPendingBatchConfirm(false);
     const signal = startWork();
-    const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), quality, signal);
+    const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), clampedPanels(), quality, signal);
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     setBusy(false);
@@ -198,6 +208,20 @@ export function GtView({
         >
           {busy ? "Working…" : "Suggest & Generate"}
         </button>
+        <span className="mx-1 h-4 w-px bg-border" />
+        <label className="flex items-center gap-1.5 text-ink-soft">
+          <span className="text-sm">Panels</span>
+          <input
+            type="number"
+            min={PANELS_MIN}
+            max={PANELS_MAX}
+            value={Number.isNaN(panelCount) ? "" : panelCount}
+            onChange={(e) => setPanelCount(parseInt(e.target.value, 10))}
+            disabled={busy}
+            aria-label="Panels per worksheet"
+            className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
+          />
+        </label>
         <span className="mx-1 h-4 w-px bg-border" />
         <label className="flex items-center gap-1.5 text-ink-soft">
           <span className="text-sm">Batches</span>

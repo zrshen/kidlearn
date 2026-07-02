@@ -106,12 +106,13 @@ def batch(req: BatchRequest) -> dict:
 class GtSuggestRequest(BaseModel):
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
+    panels: Annotated[int | None, Field(default=None, ge=4, le=6)] = None
 
 
 @app.post("/api/gt/suggest")
 def gt_suggest(req: GtSuggestRequest) -> dict:
     try:
-        spec = gt_lib.suggest_gt_spec(req.topic, req.test)
+        spec = gt_lib.suggest_gt_spec(req.topic, req.test, req.panels)
     except gt_lib.SuggestionError as e:
         raise HTTPException(status_code=502, detail={"error": f"Couldn't generate GT worksheet: {e.reason}"})
     return {"spec": spec}
@@ -136,13 +137,16 @@ class GtBatchRequest(BaseModel):
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
     n: Annotated[int, Field(ge=1, le=10)]
+    panels: Annotated[int | None, Field(default=None, ge=4, le=6)] = None
     quality: Quality = "medium"
 
 
 @app.post("/api/gt/batch")
 def gt_batch(req: GtBatchRequest) -> dict:
     try:
-        completed = gt_lib.batch_generate_gt(n=req.n, topic=req.topic, test=req.test, quality=req.quality)
+        completed = gt_lib.batch_generate_gt(
+            n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels
+        )
     except gt_lib.PartialBatchError as e:
         raise HTTPException(status_code=502, detail={"error": e.reason, "completed": e.completed})
     return {"batches": completed}

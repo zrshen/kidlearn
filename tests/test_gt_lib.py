@@ -73,9 +73,28 @@ def test_validate_spec_accepts_arbitrary_type_strings():
     assert gt_lib.validate_spec(spec) is spec
 
 
-def test_validate_spec_rejects_wrong_panel_count():
-    with pytest.raises(ValueError, match="6 panels"):
+def test_validate_spec_rejects_too_few_panels():
+    with pytest.raises(ValueError, match="panels"):
         gt_lib.validate_spec(_spec(panels=[_panel()]))
+
+
+def test_validate_spec_accepts_four_to_six_panels():
+    for n in (4, 5, 6):
+        panels = [_panel(t) for t in list(gt_lib.GENERAL_CATALOG)[:n]]
+        assert gt_lib.validate_spec(_spec(panels=panels)) is not None
+
+
+def test_validate_spec_expected_count_rejects_mismatch():
+    panels = [_panel(t) for t in list(gt_lib.GENERAL_CATALOG)[:5]]
+    with pytest.raises(ValueError, match="expected 4 panels, got 5"):
+        gt_lib.validate_spec(_spec(panels=panels), expected_panels=4)
+
+
+def test_clamp_panels_bounds():
+    assert gt_lib.clamp_panels(None) == gt_lib.GT_PANELS_DEFAULT
+    assert gt_lib.clamp_panels(2) == gt_lib.GT_PANELS_MIN
+    assert gt_lib.clamp_panels(9) == gt_lib.GT_PANELS_MAX
+    assert gt_lib.clamp_panels(5) == 5
 
 
 def test_validate_spec_rejects_empty_type():
@@ -197,10 +216,10 @@ def test_both_prompts_contain_every_heading_and_question():
 import random as _random
 
 
-def _suggest_prompt(topic=None, test=None, seed=1) -> str:
+def _suggest_prompt(topic=None, test=None, seed=1, count=6) -> str:
     profile = gt_lib.resolve_profile(test)
     with patch.object(gt_lib, "random", _random.Random(seed)):
-        msgs = gt_lib._build_suggest_messages(topic, profile)
+        msgs = gt_lib._build_suggest_messages(topic, profile, count)
     return "\n".join(m["content"] for m in msgs)
 
 
@@ -244,6 +263,41 @@ def test_scene_reaches_image_prompts_without_leaking_answer():
     # The answer/mark still appears only on the back.
     assert "circle choice B" not in front
     assert "circle choice B" in back
+
+
+def test_suggest_prompt_reflects_requested_panel_count():
+    prompt = _suggest_prompt(count=4)
+    assert "EXACTLY 4 panels" in prompt
+    assert "Build the 4 panels" in prompt
+
+
+def test_sample_subtypes_repeats_to_fill_when_catalog_is_small():
+    # NNAT has 4 subtypes; asking for 6 panels must still yield 6 (with repeats).
+    keys = list(gt_lib.NNAT_CATALOG)
+    assert len(keys) == 4
+    with patch.object(gt_lib, "random", _random.Random(1)):
+        chosen = gt_lib._sample_subtypes(keys, 6)
+    assert len(chosen) == 6
+    assert set(chosen) <= set(keys)
+    # All 4 distinct subtypes are represented before repeats pad the rest.
+    assert set(chosen) == set(keys)
+
+
+def test_suggest_gt_spec_enforces_requested_count():
+    # Model returns 6 panels but caller asked for 4 → treated as a parse failure
+    # and retried, then raised (never returns a mismatched sheet).
+    client = _stub_chat(json.dumps(_spec()))  # _spec() has 6 panels
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(gt_lib.SuggestionError):
+            gt_lib.suggest_gt_spec(topic=None, panels=4)
+
+
+def test_image_prompt_grid_matches_panel_count():
+    panels = [_panel(t) for t in list(gt_lib.GENERAL_CATALOG)[:4]]
+    front = gt_lib.render_front_prompt(_spec(panels=panels))
+    assert "Exactly 4 panels" in front
+    assert "numbered 1 through 4" in front
+    assert "2-column x 2-row" in front
 
 
 PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"stub"

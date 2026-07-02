@@ -103,11 +103,28 @@ def resolve_profile(test: str | None) -> dict:
     }
 
 
-def validate_spec(spec: dict) -> dict:
+GT_PANELS_MIN = 4
+GT_PANELS_MAX = 6
+GT_PANELS_DEFAULT = GT_PANELS_MAX
+
+
+def clamp_panels(n: int | None) -> int:
+    """Coerce a requested panel count into the supported 4–6 range."""
+    if n is None:
+        return GT_PANELS_DEFAULT
+    return max(GT_PANELS_MIN, min(GT_PANELS_MAX, int(n)))
+
+
+def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
     panels = spec.get("panels")
-    if not isinstance(panels, list) or len(panels) != 6:
-        got = len(panels) if isinstance(panels, list) else "none"
-        raise ValueError(f"expected 6 panels, got {got}")
+    if not isinstance(panels, list):
+        raise ValueError("expected a list of panels, got none")
+    got = len(panels)
+    if expected_panels is not None:
+        if got != expected_panels:
+            raise ValueError(f"expected {expected_panels} panels, got {got}")
+    elif not GT_PANELS_MIN <= got <= GT_PANELS_MAX:
+        raise ValueError(f"expected {GT_PANELS_MIN}–{GT_PANELS_MAX} panels, got {got}")
     for i, p in enumerate(panels, start=1):
         for field in ("type", "heading", "question", "answer"):
             if not str(p.get(field, "")).strip():
@@ -151,13 +168,23 @@ class SuggestionError(Exception):
         self.reason = reason
 
 
-def _build_suggest_messages(topic: str | None, profile: dict) -> list[dict]:
+def _sample_subtypes(keys: list[str], count: int) -> list[str]:
+    """Pick `count` subtypes. If the catalog has fewer than `count`, use them all
+    (shuffled) and pad with repeats so any test can fill any panel count."""
+    if count <= len(keys):
+        return random.sample(keys, count)
+    picks = random.sample(keys, len(keys))  # every subtype once, shuffled
+    picks += random.choices(keys, k=count - len(keys))  # repeats to reach count
+    return picks
+
+
+def _build_suggest_messages(topic: str | None, profile: dict, count: int) -> list[dict]:
     catalog = profile["catalog"]
     catalog_lines = "\n".join(f"- {k}: {v}" for k, v in catalog.items())
 
     # --- Variety levers (per-call randomization) ---
     keys = list(catalog)
-    chosen = random.sample(keys, min(6, len(keys)))
+    chosen = _sample_subtypes(keys, count)
     chosen_line = ", ".join(chosen)
     nonce = random.randint(1000, 9999)
     cues = ", ".join(random.sample(INSPIRATION_CUES, 3))
@@ -171,14 +198,14 @@ def _build_suggest_messages(topic: str | None, profile: dict) -> list[dict]:
         "You design Kindergarten gifted-and-talented thinking worksheets. "
         "Respond with JSON only."
     )
-    user = f"""Design ONE Kindergarten worksheet, {profile['framing']}, with EXACTLY 6 panels.
+    user = f"""Design ONE Kindergarten worksheet, {profile['framing']}, with EXACTLY {count} panels.
 
 These are the available subtypes for this test (descriptions for reference):
 {catalog_lines}
 
-Build the 6 panels using these subtypes, one per panel, in this order: {chosen_line}.
-If fewer than 6 subtypes are listed, add more panels from the catalog above, but make
-their pictures, objects, and answers completely different from the earlier panels.
+Build the {count} panels using these subtypes, one per panel, in this order: {chosen_line}.
+If a subtype repeats in that list, make the repeated panels use completely different
+pictures, objects, and answers from each other.
 (For a custom test you may use that test's own subtype names.)
 
 {theme_rule}
@@ -207,7 +234,7 @@ For each panel provide:
 Rules:
 - Everything must be K-level, age-appropriate, and visual.
 - The answer MUST be correct and consistent with the question and the scene.
-- Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...6 panels... ]}}
+- Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...{count} panels... ]}}
 """
     return [
         {"role": "system", "content": system},
@@ -215,19 +242,21 @@ Rules:
     ]
 
 
-def _finalize_spec(spec: dict, profile: dict) -> dict:
-    validate_spec(spec)
+def _finalize_spec(spec: dict, profile: dict, expected_panels: int | None = None) -> dict:
+    validate_spec(spec, expected_panels)
     spec["title"] = profile["title"]
     spec["test"] = profile["label"]
     return spec
 
 
-def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
+def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | None = None) -> dict:
     profile = resolve_profile(test)
+    count = clamp_panels(panels)
     stub = os.environ.get("GT_STUB_SPEC")
     if stub:
+        # Canned response — accept whatever panel count the fixture provides (4–6).
         return _finalize_spec(json.loads(Path(stub).read_text()), profile)
-    messages = _build_suggest_messages(topic, profile)
+    messages = _build_suggest_messages(topic, profile, count)
     last_reason = "no attempts made"
     for _ in range(SUGGEST_MAX_RETRIES + 1):
         try:
@@ -241,7 +270,7 @@ def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
             if not content:
                 last_reason = "empty response from model"
                 continue
-            return _finalize_spec(json.loads(content), profile)
+            return _finalize_spec(json.loads(content), profile, expected_panels=count)
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             last_reason = f"could not parse model response: {e}"
             continue
@@ -253,11 +282,20 @@ def suggest_gt_spec(topic: str | None, test: str | None = None) -> dict:
     raise SuggestionError(last_reason)
 
 
-_PAGE_FORMAT = """PAGE FORMAT:
+_GRID_DESC = {
+    4: "a 2-column x 2-row grid",
+    5: "a grid of 5 panels — a top row of 3 and a bottom row of 2",
+    6: "a 3-column x 2-row grid",
+}
+
+
+def _page_format(count: int) -> str:
+    grid = _GRID_DESC.get(count, f"a balanced grid of {count} panels")
+    return f"""PAGE FORMAT:
 - Landscape worksheet. White background.
 - Bright, cheerful, colorful classroom worksheet style with large, easy-to-read text.
-- Clean 3-column x 2-row grid layout. Exactly 6 panels.
-- Rounded panel boxes with thin colorful borders, each clearly numbered 1 through 6.
+- Clean {grid} layout. Exactly {count} panels.
+- Rounded panel boxes with thin colorful borders, each clearly numbered 1 through {count}.
 - Cute kid-friendly cartoon illustrations. Clean, uncluttered spacing.
 - No watermark, no logo, no extra panels."""
 
@@ -291,7 +329,7 @@ TITLE: "{title}"
 
 OUTPUT: FRONT side only. Do NOT include answers. One image only.
 
-{_PAGE_FORMAT}
+{_page_format(len(spec["panels"]))}
 
 USE EXACTLY THIS CONTENT:
 
@@ -314,7 +352,7 @@ TITLE: "{title}"
 OUTPUT: BACK side only (answer key). One image only. Match the front worksheet's layout.
 Clearly mark this as the answer page with the words "Back (Answers)".
 
-{_PAGE_FORMAT}
+{_page_format(len(spec["panels"]))}
 
 USE EXACTLY THIS CONTENT:
 
@@ -378,13 +416,19 @@ class PartialBatchError(Exception):
         self.reason = reason
 
 
-def batch_generate_gt(n: int, topic: str | None, test: str | None = None, quality: Quality = "medium") -> list[dict]:
+def batch_generate_gt(
+    n: int,
+    topic: str | None,
+    test: str | None = None,
+    quality: Quality = "medium",
+    panels: int | None = None,
+) -> list[dict]:
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
     completed: list[dict] = []
     for i in range(n):
         try:
-            spec = suggest_gt_spec(topic, test)
+            spec = suggest_gt_spec(topic, test, panels)
             pair = generate_gt_pair(spec, quality=quality)
         except Exception as e:
             raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
