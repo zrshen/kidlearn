@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { batchGenerate, type Batch, type Quality } from "../app/api";
+import { clampInt } from "../app/clamp";
 
 const MIN = 1;
 const MAX = 10;
@@ -30,8 +31,7 @@ export function BatchControls({
   const [pendingConfirm, setPendingConfirm] = useState(false);
 
   function clampedN(): number {
-    if (Number.isNaN(n)) return MIN;
-    return Math.max(MIN, Math.min(MAX, Math.trunc(n)));
+    return clampInt(n, MIN, MAX, MIN);
   }
 
   async function doRequest() {

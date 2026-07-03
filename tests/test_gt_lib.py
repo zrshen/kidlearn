@@ -123,7 +123,7 @@ def _stub_chat(content: str) -> MagicMock:
 def test_suggest_gt_spec_happy_path_stamps_title_and_test():
     client = _stub_chat(json.dumps(_spec()))
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        spec = gt_lib.suggest_gt_spec(topic=None)
+        spec = gt_lib.suggest_gt_spec(topic=None, panels=6)
     assert len(spec["panels"]) == 6
     assert spec["title"] == gt_lib.GT_TITLE
     assert spec["test"] == "General GT"
@@ -132,7 +132,7 @@ def test_suggest_gt_spec_happy_path_stamps_title_and_test():
 def test_suggest_gt_spec_passes_topic_into_prompt():
     client = _stub_chat(json.dumps(_spec()))
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        gt_lib.suggest_gt_spec(topic="ocean")
+        gt_lib.suggest_gt_spec(topic="ocean", panels=6)
     msgs = client.chat.completions.create.call_args.kwargs["messages"]
     assert "ocean" in "\n".join(m["content"] for m in msgs)
 
@@ -140,7 +140,7 @@ def test_suggest_gt_spec_passes_topic_into_prompt():
 def test_suggest_gt_spec_cogat_profile_steers_prompt_and_title():
     client = _stub_chat(json.dumps(_spec()))
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        spec = gt_lib.suggest_gt_spec(topic=None, test="cogat")
+        spec = gt_lib.suggest_gt_spec(topic=None, test="cogat", panels=6)
     msgs = client.chat.completions.create.call_args.kwargs["messages"]
     prompt = "\n".join(m["content"] for m in msgs)
     assert "figure_matrices" in prompt and "CogAT" in prompt
@@ -151,7 +151,7 @@ def test_suggest_gt_spec_cogat_profile_steers_prompt_and_title():
 def test_suggest_gt_spec_custom_test_names_it_in_prompt():
     client = _stub_chat(json.dumps(_spec()))
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        spec = gt_lib.suggest_gt_spec(topic=None, test="Iowa Assessments")
+        spec = gt_lib.suggest_gt_spec(topic=None, test="Iowa Assessments", panels=6)
     msgs = client.chat.completions.create.call_args.kwargs["messages"]
     assert "Iowa Assessments" in "\n".join(m["content"] for m in msgs)
     assert spec["test"] == "Iowa Assessments"
@@ -186,7 +186,16 @@ def test_suggest_gt_spec_stub_mode_skips_openai(monkeypatch):
         spec = gt_lib.suggest_gt_spec(topic="anything", test="cogat")
     assert spec["theme"] == "fruits & animals"
     assert spec["test"] == "CogAT"
+    # Default panel count matches the UI default (4), trimming the 6-panel fixture.
+    assert len(spec["panels"]) == gt_lib.GT_PANELS_DEFAULT == 4
     crash.chat.completions.create.assert_not_called()
+
+
+def test_suggest_gt_spec_stub_mode_honors_requested_count(monkeypatch):
+    monkeypatch.setenv("GT_STUB_SPEC", str(Path("tests/fixtures/gt_spec_stub.json").resolve()))
+    with patch.object(gt_lib, "_openai_client", lambda: MagicMock()):
+        spec = gt_lib.suggest_gt_spec(topic=None, test="cogat", panels=5)
+    assert len(spec["panels"]) == 5
 
 
 def test_front_prompt_hides_answers_back_prompt_reveals():
@@ -247,7 +256,7 @@ def test_suggest_reasoning_effort_is_medium():
     assert gt_lib.SUGGEST_REASONING_EFFORT == "medium"
     client = _stub_chat(json.dumps(_spec()))
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        gt_lib.suggest_gt_spec(topic=None)
+        gt_lib.suggest_gt_spec(topic=None, panels=6)
     assert client.chat.completions.create.call_args.kwargs["reasoning_effort"] == "medium"
 
 

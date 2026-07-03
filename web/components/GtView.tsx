@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
 import { batchGt, generateGt, suggestGt, type GtPair, type GtSpec, type Quality } from "../app/api";
+import { clampInt } from "../app/clamp";
 
 type Banner = { kind: "none" } | { kind: "error"; message: string };
 type PrintScope = "both" | "front";
@@ -65,13 +66,11 @@ export function GtView({
   }
 
   function clampedBatchN(): number {
-    if (Number.isNaN(batchN)) return BATCH_MIN;
-    return Math.max(BATCH_MIN, Math.min(BATCH_MAX, Math.trunc(batchN)));
+    return clampInt(batchN, BATCH_MIN, BATCH_MAX, BATCH_MIN);
   }
 
   function clampedPanels(): number {
-    if (Number.isNaN(panelCount)) return PANELS_DEFAULT;
-    return Math.max(PANELS_MIN, Math.min(PANELS_MAX, Math.trunc(panelCount)));
+    return clampInt(panelCount, PANELS_MIN, PANELS_MAX, PANELS_DEFAULT);
   }
 
   useEffect(() => {
@@ -217,6 +216,7 @@ export function GtView({
             max={PANELS_MAX}
             value={Number.isNaN(panelCount) ? "" : panelCount}
             onChange={(e) => setPanelCount(parseInt(e.target.value, 10))}
+            onBlur={() => setPanelCount(clampedPanels())}
             disabled={busy}
             aria-label="Panels per worksheet"
             className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
@@ -231,6 +231,7 @@ export function GtView({
             max={BATCH_MAX}
             value={Number.isNaN(batchN) ? "" : batchN}
             onChange={(e) => setBatchN(parseInt(e.target.value, 10))}
+            onBlur={() => setBatchN(clampedBatchN())}
             aria-label="Batches"
             className="w-12 rounded-md border border-border bg-surface px-1.5 py-1.5 text-center font-mono text-sm text-ink outline-none focus:border-accent"
           />

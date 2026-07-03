@@ -105,7 +105,7 @@ def resolve_profile(test: str | None) -> dict:
 
 GT_PANELS_MIN = 4
 GT_PANELS_MAX = 6
-GT_PANELS_DEFAULT = GT_PANELS_MAX
+GT_PANELS_DEFAULT = 4  # matches the web UI's default panel count
 
 
 def clamp_panels(n: int | None) -> int:
@@ -254,8 +254,13 @@ def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | No
     count = clamp_panels(panels)
     stub = os.environ.get("GT_STUB_SPEC")
     if stub:
-        # Canned response — accept whatever panel count the fixture provides (4–6).
-        return _finalize_spec(json.loads(Path(stub).read_text()), profile)
+        # Canned response — trim the fixture to the requested count so stub/demo
+        # mode still honors the Panels selection.
+        spec = json.loads(Path(stub).read_text())
+        fixture_panels = spec.get("panels")
+        if isinstance(fixture_panels, list) and len(fixture_panels) > count:
+            spec["panels"] = fixture_panels[:count]
+        return _finalize_spec(spec, profile, expected_panels=count)
     messages = _build_suggest_messages(topic, profile, count)
     last_reason = "no attempts made"
     for _ in range(SUGGEST_MAX_RETRIES + 1):

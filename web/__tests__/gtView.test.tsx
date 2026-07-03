@@ -83,6 +83,17 @@ describe("GtView", () => {
     await waitFor(() => expect(body?.panels).toBe(4));
   });
 
+  it("clamps an out-of-range panel count on blur so the field matches what is sent", async () => {
+    const user = userEvent.setup();
+    render(<GtView topic="" quality="medium" />);
+    const input = screen.getByLabelText(/panels per worksheet/i) as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "8");
+    expect(input.value).toBe("8");
+    await user.tab(); // blur
+    expect(input.value).toBe("6");
+  });
+
   it("renders batch thumbnails after Batch Generate", async () => {
     const user = userEvent.setup();
     render(<GtView topic="fruits" quality="low" />);
