@@ -7,16 +7,23 @@ import { HistorySidebar } from "../components/HistorySidebar";
 import { InputRows, emptyItems, type Item } from "../components/InputRows";
 import { TopicInput } from "../components/TopicInput";
 import { UsedWordsSidebar } from "../components/UsedWordsSidebar";
+import { WorksheetTypeSwitcher, type WorksheetType } from "../components/WorksheetTypeSwitcher";
+import { GtView } from "../components/GtView";
+import { GtHistorySidebar } from "../components/GtHistorySidebar";
+import { ThemeToggle } from "../components/ThemeToggle";
 import {
   backfillGenerated,
   deleteGenerated,
+  deleteGt,
   fetchGenerated,
+  fetchGtGenerated,
   fetchUsedWords,
   generate,
   suggest,
   type Batch,
   type GenerateResult,
   type GeneratedEntry,
+  type GtHistoryEntry,
   type Quality,
 } from "./api";
 
@@ -38,6 +45,10 @@ export default function Page() {
   const [batching, setBatching] = useState(false);
   const [banner, setBanner] = useState<Banner>({ kind: "none" });
   const [usedLoaded, setUsedLoaded] = useState(false);
+  const [mode, setMode] = useState<WorksheetType>("flashcard");
+  const [gtHistory, setGtHistory] = useState<GtHistoryEntry[]>([]);
+  const [gtSelected, setGtSelected] = useState<GtHistoryEntry | null>(null);
+  const [gtDeletedId, setGtDeletedId] = useState<string | null>(null);
 
   const busy = generating || suggesting || batching;
   const elapsed = useElapsedSeconds(busy);
@@ -79,6 +90,21 @@ export default function Page() {
         /* sidebar stays empty; not a blocking error */
       });
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("gt-mode", mode === "gt");
+    document.body.classList.toggle("flashcard-mode", mode === "flashcard");
+    return () => document.body.classList.remove("gt-mode", "flashcard-mode");
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "gt") return;
+    fetchGtGenerated()
+      .then(setGtHistory)
+      .catch(() => {
+        /* sidebar stays empty; not blocking */
+      });
+  }, [mode]);
 
   async function refreshUsed() {
     try {
@@ -171,152 +197,204 @@ export default function Page() {
 
   return (
     <div className="flex min-h-screen bg-bg">
-      <HistorySidebar
-        entries={history}
-        selectedUrl={imageUrl}
-        onSelect={(url) => {
-          setImageUrl(url);
-          setBatchResults([]);
-          setBanner({ kind: "none" });
-        }}
-        onDelete={async (filenames) => {
-          await deleteGenerated(filenames);
-          if (imageUrl && filenames.some((f) => imageUrl.endsWith(`/${f}`))) {
-            setImageUrl(null);
-          }
-          await refreshUsed();
-        }}
-      />
+      {mode === "flashcard" ? (
+        <HistorySidebar
+          entries={history}
+          selectedUrl={imageUrl}
+          onSelect={(url) => {
+            setImageUrl(url);
+            setBatchResults([]);
+            setBanner({ kind: "none" });
+          }}
+          onDelete={async (filenames) => {
+            await deleteGenerated(filenames);
+            if (imageUrl && filenames.some((f) => imageUrl.endsWith(`/${f}`))) {
+              setImageUrl(null);
+            }
+            await refreshUsed();
+          }}
+        />
+      ) : (
+        <GtHistorySidebar
+          entries={gtHistory}
+          selectedId={gtSelected?.id ?? null}
+          onSelect={(e) => setGtSelected(e)}
+          onDelete={async (id) => {
+            await deleteGt([id]);
+            try {
+              setGtHistory(await fetchGtGenerated());
+            } catch {
+              /* keep stale */
+            }
+            if (gtSelected?.id === id) setGtSelected(null);
+            setGtDeletedId(id);
+          }}
+        />
+      )}
       <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <WorksheetTypeSwitcher value={mode} onChange={setMode} />
+          <ThemeToggle />
+        </div>
         <header className="mb-10">
           <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.035em] text-ink">
-            Create a <span className="grad-title">flashcard worksheet</span>
+            Create a <span className="grad-title">{mode === "gt" ? "GT thinking worksheet" : "flashcard worksheet"}</span>
           </h1>
           <p className="mt-2 max-w-xl text-[0.95rem] text-ink-soft">
-            Six K-level words on one printable page. Suggest from a topic or type your own.
+            {mode === "gt" ? "Six reasoning panels per sheet — front questions, back answer key. Pick a topic and test focus." : "Six K-level words on one printable page. Suggest from a topic or type your own."}
           </p>
         </header>
-
-        {imageUrl && (
-          <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
-            <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
-              <span className="label-eyebrow">The Worksheet</span>
-              <span className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="rounded-md border border-border bg-bg px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-wider text-ink-soft transition-colors hover:bg-border hover:text-ink"
-                >
-                  Print
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setImageUrl(null)}
-                  className="font-mono text-[0.7rem] uppercase tracking-wider text-ink-faint transition-colors hover:text-ink"
-                  aria-label="Close preview"
-                >
-                  Close ✕
-                </button>
-              </span>
-            </figcaption>
-            <img
-              src={imageUrl}
-              alt="generated worksheet"
-              className="print-target w-full"
-              data-testid="preview"
-            />
-          </figure>
-        )}
 
         <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <TopicInput value={topic} onChange={setTopic} />
           <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
         </div>
 
-        <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={busy}
-            className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-ink"
-          >
-            {generateLabel}
-            <span
-              aria-hidden="true"
-              className="rounded-[4px] bg-white/15 px-1.5 py-px font-mono text-[0.7rem]"
-            >
-              ⌘ ↵
-            </span>
-          </button>
-          <span className="mx-1 h-4 w-px bg-border" />
-          <BatchControls
+        {/* GtView stays mounted (hidden when inactive) so an in-progress GT
+            generation isn't discarded when the user switches tabs. Flashcard
+            state lives here in the parent, so its branch can stay conditional. */}
+        <div hidden={mode !== "gt"}>
+          <GtView
             topic={topic}
             quality={quality}
-            getSignal={startWork}
-            onBatchDone={(batches) => {
-              handleBatchDone(batches);
-              setBanner({ kind: "none" });
+            selectedPair={gtSelected}
+            deletedId={gtDeletedId}
+            onGenerated={async () => {
+              try {
+                setGtHistory(await fetchGtGenerated());
+              } catch {
+                /* keep stale */
+              }
             }}
-            onError={(msg, completed) => {
-              handleBatchError(msg, completed);
-            }}
-            disabled={busy}
-            onBusyChange={setBatching}
-            elapsedLabel={elapsedLabel}
           />
-          {busy && (
-            <button
-              type="button"
-              onClick={cancelWork}
-              className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
-            >
-              Cancel
-            </button>
-          )}
-          {hasAnyContent && !busy && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
-            >
-              Clear
-            </button>
-          )}
-          <span className="ml-auto inline-flex items-center gap-1 font-mono text-[0.7rem] text-ink-faint">
-            <kbd className="rounded-[4px] border border-border-strong border-b-2 bg-bg px-1.5 py-px font-mono text-[0.7rem] text-ink-soft">
-              ?
-            </kbd>
-            <span>shortcuts</span>
-          </span>
         </div>
+        {mode === "flashcard" && (
+          <>
+            {imageUrl && (
+              <figure className="mb-8 overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
+                <figcaption className="flex items-center justify-between border-b border-border px-5 py-3">
+                  <span className="label-eyebrow">The Worksheet</span>
+                  <span className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="rounded-md border border-border bg-bg px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-wider text-ink-soft transition-colors hover:bg-border hover:text-ink"
+                    >
+                      Print
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageUrl(null)}
+                      className="font-mono text-[0.7rem] uppercase tracking-wider text-ink-faint transition-colors hover:text-ink"
+                      aria-label="Close preview"
+                    >
+                      Close ✕
+                    </button>
+                  </span>
+                </figcaption>
+                <img
+                  src={imageUrl}
+                  alt="generated worksheet"
+                  className="print-target w-full"
+                  data-testid="preview"
+                />
+              </figure>
+            )}
 
-        {banner.kind !== "none" && (
-          <div className="mb-5">
-            <ErrorBanner {...banner} />
-          </div>
+            <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-on-primary transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-primary"
+              >
+                {generateLabel}
+                <span
+                  aria-hidden="true"
+                  className="rounded-[4px] bg-white/15 px-1.5 py-px font-mono text-[0.7rem]"
+                >
+                  ⌘ ↵
+                </span>
+              </button>
+              <span className="mx-1 h-4 w-px bg-border" />
+              <BatchControls
+                topic={topic}
+                quality={quality}
+                getSignal={startWork}
+                onBatchDone={(batches) => {
+                  handleBatchDone(batches);
+                  setBanner({ kind: "none" });
+                }}
+                onError={(msg, completed) => {
+                  handleBatchError(msg, completed);
+                }}
+                disabled={busy}
+                onBusyChange={setBatching}
+                elapsedLabel={elapsedLabel}
+              />
+              {busy && (
+                <button
+                  type="button"
+                  onClick={cancelWork}
+                  className="rounded-lg border border-conflict-ink/30 bg-conflict-bg px-3 py-2 text-sm font-medium text-conflict-ink transition-colors hover:bg-danger hover:text-white"
+                >
+                  Cancel
+                </button>
+              )}
+              {hasAnyContent && !busy && (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-border hover:text-ink"
+                >
+                  Clear
+                </button>
+              )}
+              <span className="ml-auto inline-flex items-center gap-1 font-mono text-[0.7rem] text-ink-faint">
+                <kbd className="rounded-[4px] border border-border-strong border-b-2 bg-bg px-1.5 py-px font-mono text-[0.7rem] text-ink-soft">
+                  ?
+                </kbd>
+                <span>shortcuts</span>
+              </span>
+            </div>
+
+            {banner.kind !== "none" && (
+              <div className="mb-5">
+                <ErrorBanner {...banner} />
+              </div>
+            )}
+
+            <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
+
+            <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    usedLoaded ? "bg-success" : "bg-ink-faint"
+                  }`}
+                />
+                {usedLoaded
+                  ? `backend ready · ${usedWords.length} words in library`
+                  : "connecting…"}
+              </span>
+              <span>v1.0 · gpt-image-2 · gpt-5.5</span>
+            </div>
+
+            <div className="mt-10">
+              <BatchPreview batches={batchResults} />
+            </div>
+          </>
         )}
-
-        <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
-
-        <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                usedLoaded ? "bg-success" : "bg-ink-faint"
-              }`}
-            />
-            {usedLoaded
-              ? `backend ready · ${usedWords.length} words in library`
-              : "connecting…"}
-          </span>
-          <span>v1.0 · gpt-image-2 · gpt-5.5</span>
-        </div>
-
-        <div className="mt-10">
-          <BatchPreview batches={batchResults} />
-        </div>
       </main>
-      <UsedWordsSidebar words={usedWords} />
+      {mode === "flashcard" ? (
+        <UsedWordsSidebar words={usedWords} />
+      ) : (
+        <aside className="sticky top-0 h-screen w-[232px] flex-shrink-0 border-l border-border bg-surface p-5 opacity-50">
+          <span className="label-eyebrow">Word Library</span>
+          <p className="mt-2 font-mono text-[0.66rem] text-ink-faint">🔒 Flashcard mode only</p>
+          <p className="mt-2 text-[0.78rem] text-ink-faint">GT worksheets don’t track used words — every sheet is freshly generated.</p>
+        </aside>
+      )}
     </div>
   );
 }
@@ -372,6 +450,7 @@ function useElapsedSeconds(active: boolean): number {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     if (!active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setElapsed(0);
       return;
     }

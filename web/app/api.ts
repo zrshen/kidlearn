@@ -181,3 +181,148 @@ export async function batchGenerate(
     completed: (j.completed ?? []).map(toBatch),
   };
 }
+
+export type GtPanel = {
+  type: string;
+  heading: string;
+  question: string;
+  items: string[];
+  choices: string[];
+  instruction: string;
+  answer: string;
+  explanation?: string;
+};
+export type GtSpec = { title: string; theme: string; test?: string; panels: GtPanel[] };
+
+export type GtSuggestResult =
+  | { ok: true; spec: GtSpec }
+  | { ok: false; message: string }
+  | { ok: false; cancelled: true };
+
+export async function suggestGt(
+  topic: string | null,
+  test: string | null = null,
+  panels: number | null = null,
+  signal?: AbortSignal,
+): Promise<GtSuggestResult> {
+  let r: Response;
+  try {
+    r = await fetch(`${API}/api/gt/suggest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, test, panels }),
+      signal,
+    });
+  } catch (e) {
+    if (isAbort(e)) return { ok: false, cancelled: true };
+    return { ok: false, message: "Could not reach server. Is the backend running?" };
+  }
+  if (r.status === 200) {
+    const j = (await r.json()) as { spec: GtSpec };
+    return { ok: true, spec: j.spec };
+  }
+  const j = (await r.json().catch(() => ({}))) as { error?: string };
+  return { ok: false, message: j.error ?? `server ${r.status}` };
+}
+
+export type GtPair = { id: string; theme: string; test: string; frontUrl: string; backUrl: string; spec?: GtSpec | null };
+
+export type GtGenerateResult =
+  | { ok: true; pair: GtPair }
+  | { ok: false; kind: "error"; message: string }
+  | { ok: false; kind: "cancelled" };
+
+type GtPairRaw = { id: string; theme?: string; test?: string; front_url: string; back_url: string; spec?: GtSpec | null };
+
+function toGtPair(raw: GtPairRaw): GtPair {
+  return {
+    id: raw.id,
+    theme: raw.theme ?? "",
+    test: raw.test ?? "",
+    frontUrl: `${API}${raw.front_url}`,
+    backUrl: `${API}${raw.back_url}`,
+    spec: raw.spec ?? null,
+  };
+}
+
+export async function generateGt(
+  spec: GtSpec,
+  quality: Quality = "medium",
+  signal?: AbortSignal,
+): Promise<GtGenerateResult> {
+  let r: Response;
+  try {
+    r = await fetch(`${API}/api/gt/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec, quality }),
+      signal,
+    });
+  } catch (e) {
+    if (isAbort(e)) return { ok: false, kind: "cancelled" };
+    return { ok: false, kind: "error", message: "Could not reach server. Is the backend running?" };
+  }
+  if (r.status === 200) {
+    const j = (await r.json()) as GtPairRaw;
+    return { ok: true, pair: toGtPair(j) };
+  }
+  const j = (await r.json().catch(() => ({}))) as { error?: string };
+  return { ok: false, kind: "error", message: j.error ?? `server ${r.status}` };
+}
+
+export type GtBatchResult =
+  | { ok: true; batches: GtPair[] }
+  | { ok: false; message: string; completed: GtPair[] }
+  | { ok: false; cancelled: true };
+
+export async function batchGt(
+  topic: string | null,
+  test: string | null,
+  n: number,
+  panels: number | null = null,
+  quality: Quality = "medium",
+  signal?: AbortSignal,
+): Promise<GtBatchResult> {
+  let r: Response;
+  try {
+    r = await fetch(`${API}/api/gt/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, test, n, panels, quality }),
+      signal,
+    });
+  } catch (e) {
+    if (isAbort(e)) return { ok: false, cancelled: true };
+    return { ok: false, message: "Could not reach server. Is the backend running?", completed: [] };
+  }
+  if (r.status === 200) {
+    const j = (await r.json()) as { batches: GtPairRaw[] };
+    return { ok: true, batches: j.batches.map(toGtPair) };
+  }
+  const j = (await r.json().catch(() => ({}))) as {
+    error?: string;
+    completed?: GtPairRaw[];
+  };
+  return { ok: false, message: j.error ?? `server ${r.status}`, completed: (j.completed ?? []).map(toGtPair) };
+}
+
+export type GtHistoryEntry = GtPair & { mtime: number };
+
+export async function fetchGtGenerated(): Promise<GtHistoryEntry[]> {
+  const r = await fetch(`${API}/api/gt/generated`);
+  if (!r.ok) throw new Error(`gt-generated ${r.status}`);
+  const j = (await r.json()) as {
+    items: (GtPairRaw & { mtime: number })[];
+  };
+  return j.items.map((e) => ({ ...toGtPair(e), mtime: e.mtime }));
+}
+
+export async function deleteGt(ids: string[]): Promise<{ deleted: string[] }> {
+  const r = await fetch(`${API}/api/gt/generated/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!r.ok) throw new Error(`gt-delete ${r.status}`);
+  return (await r.json()) as { deleted: string[] };
+}

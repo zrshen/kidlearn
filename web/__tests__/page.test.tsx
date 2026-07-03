@@ -205,7 +205,9 @@ describe("Page", () => {
     );
     const user = userEvent.setup();
     render(<Page />);
-    const numInput = screen.getByLabelText(/batches/i) as HTMLInputElement;
+    // getByRole filters hidden nodes, so this selects the visible flashcard
+    // batch input rather than the always-mounted (hidden) GtView one.
+    const numInput = screen.getByRole("spinbutton", { name: /batches/i }) as HTMLInputElement;
     await user.clear(numInput);
     await user.type(numInput, "2");
     await user.click(screen.getByRole("button", { name: /batch generate/i }));

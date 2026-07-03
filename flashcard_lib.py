@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable, Literal, TypedDict
+from typing import Iterable, TypedDict
 
-Quality = Literal["low", "medium", "high"]
+from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
 
 
 class WordSentence(TypedDict):
@@ -14,7 +14,6 @@ class WordSentence(TypedDict):
 
 
 USED_WORDS_PATH: Path = Path(__file__).parent / "used_words.json"
-GENERATED_DIR: Path = Path(__file__).parent / "server" / "generated"
 
 
 def load_used_words() -> set[str]:
@@ -138,18 +137,7 @@ def _used_words_lock():
 
 
 def _produce_png_bytes(items: list[WordSentence], quality: Quality = "medium") -> bytes:
-    stub = os.environ.get("FLASHCARD_STUB_IMAGE")
-    if stub:
-        return Path(stub).read_bytes()
-    result = _openai_client().images.generate(
-        model="gpt-image-2",
-        prompt=_render_prompt(items),
-        size="1536x1024",
-        quality=quality,
-        n=1,
-    )
-    assert result.data and result.data[0].b64_json, "image generation returned no data"
-    return base64.b64decode(result.data[0].b64_json)
+    return produce_png_bytes(_render_prompt(items), quality, "FLASHCARD_STUB_IMAGE", _openai_client)
 
 
 def generate_and_record(items: list[WordSentence], quality: Quality = "medium") -> Path:

@@ -182,3 +182,77 @@ def test_batch_502_on_partial_failure_returns_completed(client):
             {"image_url": "/generated/image-tiger.png", "words": BATCH_LIB_RESULT[0]["words"]},
         ],
     }
+
+
+import gt_lib
+
+GT_SPEC = json.loads(Path("tests/fixtures/gt_spec_stub.json").read_text())
+
+
+def test_gt_suggest_returns_spec(client):
+    with patch("server.main.gt_lib.suggest_gt_spec", return_value=GT_SPEC):
+        r = client.post("/api/gt/suggest", json={"topic": "fruits"})
+    assert r.status_code == 200
+    assert r.json()["spec"]["theme"] == "fruits & animals"
+
+
+def test_gt_suggest_502_on_suggestion_error(client):
+    with patch("server.main.gt_lib.suggest_gt_spec", side_effect=gt_lib.SuggestionError("nope")):
+        r = client.post("/api/gt/suggest", json={"topic": None})
+    assert r.status_code == 502
+    assert "nope" in r.json()["error"]
+
+
+def test_gt_generate_returns_pair(client):
+    pair = {"id": "fruits-1", "front_url": "/generated/gt-fruits-1-front.png", "back_url": "/generated/gt-fruits-1-back.png"}
+    with patch("server.main.gt_lib.generate_gt_pair", return_value=pair):
+        r = client.post("/api/gt/generate", json={"spec": GT_SPEC, "quality": "low"})
+    assert r.status_code == 200
+    assert r.json() == pair
+
+
+def test_gt_generate_400_on_invalid_spec(client):
+    with patch("server.main.gt_lib.generate_gt_pair", side_effect=ValueError("expected 6 panels, got 1")):
+        r = client.post("/api/gt/generate", json={"spec": {"panels": []}})
+    assert r.status_code == 400
+    assert "invalid spec" in r.json()["error"]
+
+
+def test_gt_generate_500_on_image_failure(client):
+    with patch("server.main.gt_lib.generate_gt_pair", side_effect=RuntimeError("api down")):
+        r = client.post("/api/gt/generate", json={"spec": GT_SPEC})
+    assert r.status_code == 500
+    assert "image generation failed" in r.json()["error"]
+
+
+def test_gt_batch_returns_batches(client):
+    batches = [{"id": "a-1", "theme": "a", "front_url": "/generated/gt-a-1-front.png", "back_url": "/generated/gt-a-1-back.png"}]
+    with patch("server.main.gt_lib.batch_generate_gt", return_value=batches):
+        r = client.post("/api/gt/batch", json={"n": 1, "topic": "a"})
+    assert r.status_code == 200
+    assert r.json() == {"batches": batches}
+
+
+def test_gt_batch_502_partial(client):
+    err = gt_lib.PartialBatchError(completed=[{"id": "a-1"}], reason="Batch 2 of 2 failed: boom")
+    with patch("server.main.gt_lib.batch_generate_gt", side_effect=err):
+        r = client.post("/api/gt/batch", json={"n": 2})
+    assert r.status_code == 502
+    body = r.json()
+    assert body["error"].endswith("boom")
+    assert body["completed"] == [{"id": "a-1"}]
+
+
+def test_gt_generated_lists_pairs(client):
+    items = [{"id": "a-1", "theme": "a", "front_url": "/generated/x-front.png", "back_url": "/generated/x-back.png", "mtime": 1.0}]
+    with patch("server.main.gt_lib.list_gt_pairs", return_value=items):
+        r = client.get("/api/gt/generated")
+    assert r.status_code == 200
+    assert r.json() == {"items": items}
+
+
+def test_gt_delete_returns_deleted(client):
+    with patch("server.main.gt_lib.delete_gt", return_value={"deleted": ["a-1"]}):
+        r = client.post("/api/gt/generated/delete", json={"ids": ["a-1"]})
+    assert r.status_code == 200
+    assert r.json() == {"deleted": ["a-1"]}

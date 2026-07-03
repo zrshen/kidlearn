@@ -1,0 +1,485 @@
+"""GT (gifted-and-talented) thinking worksheet generator. No FastAPI/CLI imports."""
+from __future__ import annotations
+
+import json
+import os
+import random
+import re
+import time
+from pathlib import Path
+
+from openai import OpenAI, OpenAIError
+
+from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
+
+GT_TITLE = "Kindergarten GT Thinking Practice"
+
+GENERAL_CATALOG: dict[str, str] = {
+    "odd_one_out": "Show several pictures; one does not belong. Child picks the odd one and tells why.",
+    "pattern": "Show a repeating sequence ending in a blank; child picks what comes next from A/B/C.",
+    "analogy": "X is to Y as Z is to ___; child picks the matching item from A/B/C.",
+    "sequence": "Show stage pictures out of order; child puts them in the correct 1-4 order.",
+    "compare": "Compare one property (taller, bigger, heavier) across pictures; single A/B/C answer.",
+    "matrix": "2x2 grid with one blank cell; child picks the shape/color that completes it from A/B/C.",
+    "classification": "Show items; child picks which one belongs to (or is outside) a named category.",
+    "counting": "Show a small group of objects; child picks the correct count from A/B/C.",
+    "spatial": "Ask about position (above/below/next to); child picks the correct A/B/C answer.",
+    "same_different": "Show pairs; child picks which two are the same (or which one is different).",
+}
+
+COGAT_CATALOG: dict[str, str] = {
+    "picture_analogies": "Verbal: top picture pair shows a relationship; child completes the bottom pair from A/B/C.",
+    "picture_classification": "Verbal: three pictures share a trait; child picks the one that belongs from A/B/C.",
+    "sentence_completion": "Verbal: a short spoken-style clue; child picks the matching picture from A/B/C.",
+    "number_analogies": "Quantitative: top number/quantity pair shows a rule; child completes the bottom pair from A/B/C.",
+    "number_series": "Quantitative: a short quantity series with a blank; child picks what comes next from A/B/C.",
+    "number_puzzles": "Quantitative: a simple balance/equation; child picks the missing quantity from A/B/C.",
+    "figure_matrices": "Nonverbal: 2x2 figure matrix with one blank; child picks the completing figure from A/B/C.",
+    "figure_classification": "Nonverbal: three figures share a trait; child picks the figure that belongs from A/B/C.",
+    "paper_folding": "Nonverbal: a folded, hole-punched paper; child picks how it looks unfolded from A/B/C.",
+}
+
+NNAT_CATALOG: dict[str, str] = {
+    "pattern_completion": "A picture with a missing piece; child picks the piece that completes it from A/B/C.",
+    "reasoning_by_analogy": "Figures change by a rule across a 2x2 grid; child picks the figure that fits from A/B/C.",
+    "serial_reasoning": "A row/grid of figures changing in sequence; child picks what comes next from A/B/C.",
+    "spatial_visualization": "How two shapes combine or rotate; child picks the result from A/B/C.",
+}
+
+OLSAT_CATALOG: dict[str, str] = {
+    "following_directions": "Read a short direction; child picks the picture that matches it from A/B/C.",
+    "picture_classification": "Pictures share a trait; child picks the one that belongs from A/B/C.",
+    "picture_analogies": "Top picture pair shows a relationship; child completes the bottom pair from A/B/C.",
+    "picture_series": "A series of pictures with a blank; child picks what comes next from A/B/C.",
+    "aural_reasoning": "A short spoken-style riddle; child picks the matching picture from A/B/C.",
+    "arithmetic_reasoning": "A simple counting/quantity word problem; child picks the answer from A/B/C.",
+}
+
+PROFILES: dict[str, dict] = {
+    "general": {
+        "label": "General GT",
+        "title": GT_TITLE,
+        "catalog": GENERAL_CATALOG,
+        "framing": "an open Kindergarten gifted-and-talented thinking worksheet",
+    },
+    "cogat": {
+        "label": "CogAT",
+        "title": "Kindergarten CogAT Practice",
+        "catalog": COGAT_CATALOG,
+        "framing": "in the style of the CogAT (Cognitive Abilities Test), spanning verbal, quantitative, and nonverbal reasoning",
+    },
+    "nnat": {
+        "label": "NNAT",
+        "title": "Kindergarten NNAT Practice",
+        "catalog": NNAT_CATALOG,
+        "framing": "in the style of the NNAT (Naglieri Nonverbal Ability Test) — picture/figure based, no reading required",
+    },
+    "olsat": {
+        "label": "OLSAT",
+        "title": "Kindergarten OLSAT Practice",
+        "catalog": OLSAT_CATALOG,
+        "framing": "in the style of the OLSAT (Otis-Lennon School Ability Test), verbal and nonverbal reasoning",
+    },
+}
+
+DEFAULT_PROFILE = "general"
+
+
+def _openai_client() -> OpenAI:
+    return OpenAI()
+
+
+def resolve_profile(test: str | None) -> dict:
+    name = (test or "").strip()
+    key = name.lower() or DEFAULT_PROFILE
+    if key in PROFILES:
+        return {"id": key, **PROFILES[key]}
+    return {
+        "id": "custom",
+        "label": name,
+        "title": f"Kindergarten {name} Practice",
+        "catalog": GENERAL_CATALOG,
+        "framing": f'in the style of the "{name}" test — use that test\'s characteristic question subtypes',
+    }
+
+
+GT_PANELS_MIN = 4
+GT_PANELS_MAX = 6
+GT_PANELS_DEFAULT = 4  # matches the web UI's default panel count
+
+
+def clamp_panels(n: int | None) -> int:
+    """Coerce a requested panel count into the supported 4–6 range."""
+    if n is None:
+        return GT_PANELS_DEFAULT
+    return max(GT_PANELS_MIN, min(GT_PANELS_MAX, int(n)))
+
+
+def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
+    panels = spec.get("panels")
+    if not isinstance(panels, list):
+        raise ValueError("expected a list of panels, got none")
+    got = len(panels)
+    if expected_panels is not None:
+        if got != expected_panels:
+            raise ValueError(f"expected {expected_panels} panels, got {got}")
+    elif not GT_PANELS_MIN <= got <= GT_PANELS_MAX:
+        raise ValueError(f"expected {GT_PANELS_MIN}–{GT_PANELS_MAX} panels, got {got}")
+    for i, p in enumerate(panels, start=1):
+        for field in ("type", "heading", "question", "answer"):
+            if not str(p.get(field, "")).strip():
+                raise ValueError(f"panel {i}: missing {field}")
+    return spec
+
+
+SUGGEST_MODEL = "gpt-5.5"
+SUGGEST_REASONING_EFFORT = "medium"
+SUGGEST_MAX_RETRIES = 3
+
+# Untopic'd worksheets rotate through these so unspecified-topic batches differ.
+THEME_POOL = [
+    "ocean animals", "jungle animals", "farm animals", "bugs & insects",
+    "dinosaurs", "outer space", "weather & seasons", "fruits & vegetables",
+    "vehicles", "musical instruments", "sports & games", "the playground",
+    "birds", "things in a kitchen", "the garden", "winter wonderland",
+    "construction site", "under the sea", "pets", "things that fly",
+]
+
+# Random "inspiration" cues nudge the model away from its default examples.
+INSPIRATION_CUES = [
+    "unusual color palettes", "playful asymmetry", "unexpected objects",
+    "varied counts and quantities", "different spatial arrangements",
+    "fresh everyday items", "bold primary colors", "soft pastel colors",
+    "nature scenes", "household objects", "shapes in motion", "seasonal motifs",
+]
+
+# Tired textbook examples the model keeps defaulting to — forbid them by name.
+CLICHES_TO_AVOID = (
+    "a repeating red-circle / blue-square pattern; "
+    "the bird→nest / dog→doghouse analogy; "
+    "an apple/banana/orange + teddy-bear odd-one-out; "
+    "a giraffe-is-tallest compare"
+)
+
+
+class SuggestionError(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _sample_subtypes(keys: list[str], count: int) -> list[str]:
+    """Pick `count` subtypes. If the catalog has fewer than `count`, use them all
+    (shuffled) and pad with repeats so any test can fill any panel count."""
+    if count <= len(keys):
+        return random.sample(keys, count)
+    picks = random.sample(keys, len(keys))  # every subtype once, shuffled
+    picks += random.choices(keys, k=count - len(keys))  # repeats to reach count
+    return picks
+
+
+def _build_suggest_messages(topic: str | None, profile: dict, count: int) -> list[dict]:
+    catalog = profile["catalog"]
+    catalog_lines = "\n".join(f"- {k}: {v}" for k, v in catalog.items())
+
+    # --- Variety levers (per-call randomization) ---
+    keys = list(catalog)
+    chosen = _sample_subtypes(keys, count)
+    chosen_line = ", ".join(chosen)
+    nonce = random.randint(1000, 9999)
+    cues = ", ".join(random.sample(INSPIRATION_CUES, 3))
+
+    if topic and topic.strip():
+        theme_rule = f'Theme every panel around: "{topic}".'
+    else:
+        theme_rule = f'Pick ONE cohesive kid-friendly theme for all panels — use: "{random.choice(THEME_POOL)}".'
+
+    system = (
+        "You design Kindergarten gifted-and-talented thinking worksheets. "
+        "Respond with JSON only."
+    )
+    user = f"""Design ONE Kindergarten worksheet, {profile['framing']}, with EXACTLY {count} panels.
+
+These are the available subtypes for this test (descriptions for reference):
+{catalog_lines}
+
+Build the {count} panels using these subtypes, one per panel, in this order: {chosen_line}.
+If a subtype repeats in that list, make the repeated panels use completely different
+pictures, objects, and answers from each other.
+(For a custom test you may use that test's own subtype names.)
+
+{theme_rule}
+
+VARIETY IS REQUIRED. Variation seed: #{nonce} — treat this as a directive to diverge
+from your default go-to examples; lean into {cues}.
+- Do NOT use these tired textbook examples: {CLICHES_TO_AVOID}.
+- Invent fresh, specific objects, colors, counts, and relationships, and make every
+  panel visibly different from the others (vary the objects, colors, and quantities).
+
+For each panel provide:
+- type: a short subtype key (snake_case)
+- heading: short title (e.g. "Picture Analogies")
+- question: the question a child reads
+- scene: a DETAILED description of exactly what to draw for the question state —
+  the specific objects with their colors, quantities, and positions; the grid /
+  sequence / matrix layout; where the blank goes; and what each A/B/C choice picture
+  shows. Describe the QUESTION ONLY — do NOT reveal or mark the correct answer here.
+- items: list of picture words to draw (or [] if none)
+- choices: list like ["A = three red apples", "B = two green pears"] (or [] if none)
+- instruction: short bottom instruction
+- answer: the correct choice stated clearly AND how to mark it on the answer key
+  (e.g. "B — the doghouse; circle choice B")
+- explanation: short reason (or "" if none)
+
+Rules:
+- Everything must be K-level, age-appropriate, and visual.
+- The answer MUST be correct and consistent with the question and the scene.
+- Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...{count} panels... ]}}
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def _finalize_spec(spec: dict, profile: dict, expected_panels: int | None = None) -> dict:
+    validate_spec(spec, expected_panels)
+    spec["title"] = profile["title"]
+    spec["test"] = profile["label"]
+    return spec
+
+
+def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | None = None) -> dict:
+    profile = resolve_profile(test)
+    count = clamp_panels(panels)
+    stub = os.environ.get("GT_STUB_SPEC")
+    if stub:
+        # Canned response — trim the fixture to the requested count so stub/demo
+        # mode still honors the Panels selection.
+        spec = json.loads(Path(stub).read_text())
+        fixture_panels = spec.get("panels")
+        if isinstance(fixture_panels, list) and len(fixture_panels) > count:
+            spec["panels"] = fixture_panels[:count]
+        return _finalize_spec(spec, profile, expected_panels=count)
+    messages = _build_suggest_messages(topic, profile, count)
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(
+                model=SUGGEST_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                reasoning_effort=SUGGEST_REASONING_EFFORT,
+            )
+            content = resp.choices[0].message.content
+            if not content:
+                last_reason = "empty response from model"
+                continue
+            return _finalize_spec(json.loads(content), profile, expected_panels=count)
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            last_reason = f"could not parse model response: {e}"
+            continue
+        except OpenAIError as e:
+            # Transient API/network errors (rate limit, timeout, connection):
+            # retry, and surface as a friendly SuggestionError if they persist.
+            last_reason = f"model request failed: {e}"
+            continue
+    raise SuggestionError(last_reason)
+
+
+_GRID_DESC = {
+    4: "a 2-column x 2-row grid",
+    5: "a grid of 5 panels — a top row of 3 and a bottom row of 2",
+    6: "a 3-column x 2-row grid",
+}
+
+
+def _page_format(count: int) -> str:
+    grid = _GRID_DESC.get(count, f"a balanced grid of {count} panels")
+    return f"""PAGE FORMAT:
+- Landscape worksheet. White background.
+- Bright, cheerful, colorful classroom worksheet style with large, easy-to-read text.
+- Clean {grid} layout. Exactly {count} panels.
+- Rounded panel boxes with thin colorful borders, each clearly numbered 1 through {count}.
+- Cute kid-friendly cartoon illustrations. Clean, uncluttered spacing.
+- No watermark, no logo, no extra panels."""
+
+
+def _panel_block(p: dict, *, reveal: bool) -> str:
+    lines = [
+        f"Panel: {p['heading']} (type: {p['type']})",
+        f"Question: {p['question']}",
+    ]
+    if str(p.get("scene", "")).strip():
+        lines.append(f"Scene (draw exactly this): {p['scene']}")
+    if p.get("items"):
+        lines.append("Pictures: " + ", ".join(p["items"]))
+    if p.get("choices"):
+        lines.append("Choices: " + "; ".join(p["choices"]))
+    if str(p.get("instruction", "")).strip():
+        lines.append(f"Instruction: {p['instruction']}")
+    if reveal:
+        lines.append(f"ANSWER: {p['answer']}")
+        if str(p.get("explanation", "")).strip():
+            lines.append(f"Explanation: {p['explanation']}")
+    return "\n".join(lines)
+
+
+def render_front_prompt(spec: dict) -> str:
+    title = spec.get("title", GT_TITLE)
+    panels = "\n\n".join(_panel_block(p, reveal=False) for p in spec["panels"])
+    return f"""Create ONE educational worksheet image for a Kindergarten student.
+
+TITLE: "{title}"
+
+OUTPUT: FRONT side only. Do NOT include answers. One image only.
+
+{_page_format(len(spec["panels"]))}
+
+USE EXACTLY THIS CONTENT:
+
+{panels}
+
+BOTTOM BANNER: "Think carefully and choose the best answer!"
+
+IMPORTANT:
+- FRONT side only. No answers visible. Do not circle any answer. Do not reveal the solution.
+- Keep all text spelled correctly. Make it printable and classroom-friendly."""
+
+
+def render_back_prompt(spec: dict) -> str:
+    title = spec.get("title", GT_TITLE)
+    panels = "\n\n".join(_panel_block(p, reveal=True) for p in spec["panels"])
+    return f"""Create ONE educational worksheet image for a Kindergarten student.
+
+TITLE: "{title}"
+
+OUTPUT: BACK side only (answer key). One image only. Match the front worksheet's layout.
+Clearly mark this as the answer page with the words "Back (Answers)".
+
+{_page_format(len(spec["panels"]))}
+
+USE EXACTLY THIS CONTENT:
+
+{panels}
+
+BACK-SIDE RULES:
+- Show the same question content and images as the front page.
+- Reveal the correct answer clearly; circle or highlight the correct choice.
+- Add a short answer label in each panel. Keep the layout aligned with the front.
+
+BOTTOM BANNER: "Great job! Keep thinking and learning!"
+
+IMPORTANT:
+- BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
+
+
+def _slug(theme: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (theme or "gt").lower()).strip("-")
+    return s or "gt"
+
+
+def _new_id(theme: str) -> str:
+    return f"{_slug(theme)}-{int(time.time() * 1000)}"
+
+
+def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
+    validate_spec(spec)
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    theme = str(spec.get("theme", ""))
+    gid = _new_id(theme)
+    front_path = GENERATED_DIR / f"gt-{gid}-front.png"
+    back_path = GENERATED_DIR / f"gt-{gid}-back.png"
+    manifest_path = GENERATED_DIR / f"gt-{gid}.json"
+
+    front_bytes = produce_png_bytes(render_front_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    front_path.write_bytes(front_bytes)
+    try:
+        back_bytes = produce_png_bytes(render_back_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    except Exception:
+        front_path.unlink(missing_ok=True)
+        raise
+    back_path.write_bytes(back_bytes)
+
+    manifest = {
+        "kind": "gt",
+        "id": gid,
+        "theme": theme,
+        "test": str(spec.get("test", "")),
+        "spec": spec,
+        "front": front_path.name,
+        "back": back_path.name,
+    }
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    return {"id": gid, "front_url": f"/generated/{front_path.name}", "back_url": f"/generated/{back_path.name}"}
+
+
+class PartialBatchError(Exception):
+    def __init__(self, completed: list[dict], reason: str) -> None:
+        super().__init__(reason)
+        self.completed = completed
+        self.reason = reason
+
+
+def batch_generate_gt(
+    n: int,
+    topic: str | None,
+    test: str | None = None,
+    quality: Quality = "medium",
+    panels: int | None = None,
+) -> list[dict]:
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    completed: list[dict] = []
+    for i in range(n):
+        try:
+            spec = suggest_gt_spec(topic, test, panels)
+            pair = generate_gt_pair(spec, quality=quality)
+        except Exception as e:
+            raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
+        completed.append({
+            **pair,
+            "theme": str(spec.get("theme", "")),
+            "test": str(spec.get("test", "")),
+            "spec": spec,
+        })
+    return completed
+
+
+def list_gt_pairs() -> list[dict]:
+    items: list[dict] = []
+    for mp in GENERATED_DIR.glob("gt-*.json"):
+        try:
+            m = json.loads(mp.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        items.append(
+            {
+                "id": m.get("id", mp.stem.removeprefix("gt-")),
+                "theme": m.get("theme", ""),
+                "test": m.get("test", ""),
+                "front_url": f"/generated/{m.get('front', '')}",
+                "back_url": f"/generated/{m.get('back', '')}",
+                "spec": m.get("spec"),
+                "mtime": mp.stat().st_mtime,
+            }
+        )
+    items.sort(key=lambda e: e["mtime"], reverse=True)
+    return items
+
+
+def delete_gt(ids: list[str]) -> dict:
+    deleted: list[str] = []
+    for gid in ids:
+        if not re.fullmatch(r"[a-z0-9-]+", gid):
+            continue
+        manifest = GENERATED_DIR / f"gt-{gid}.json"
+        front = GENERATED_DIR / f"gt-{gid}-front.png"
+        back = GENERATED_DIR / f"gt-{gid}-back.png"
+        if not manifest.is_file() and not front.is_file():
+            continue
+        manifest.unlink(missing_ok=True)
+        front.unlink(missing_ok=True)
+        back.unlink(missing_ok=True)
+        deleted.append(gid)
+    return {"deleted": deleted}

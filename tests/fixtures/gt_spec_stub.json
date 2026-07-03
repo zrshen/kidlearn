@@ -1,0 +1,12 @@
+{
+  "title": "Kindergarten GT Thinking Practice",
+  "theme": "fruits & animals",
+  "panels": [
+    {"type": "odd_one_out", "heading": "Odd One Out", "question": "Which one does not belong?", "items": ["apple","banana","orange","grapes","strawberry","teddy bear"], "choices": [], "instruction": "Circle the odd one.", "answer": "teddy bear", "explanation": "It is not a fruit."},
+    {"type": "pattern", "heading": "Pattern", "question": "What comes next?", "items": ["red circle","blue square","red circle","blue square","blank"], "choices": ["A = red circle","B = blue square","C = yellow triangle"], "instruction": "Choose the correct answer.", "answer": "A", "explanation": ""},
+    {"type": "analogy", "heading": "Analogy", "question": "Bird is to nest as dog is to ___.", "items": ["bird","nest","dog"], "choices": ["A = bone","B = doghouse","C = tree"], "instruction": "Choose the correct answer.", "answer": "B (doghouse)", "explanation": ""},
+    {"type": "sequence", "heading": "Sequence", "question": "Put the pictures in order.", "items": ["seed","sprout","flower","leafy plant"], "choices": [], "instruction": "Order 1-4.", "answer": "1 - 2 - 4 - 3", "explanation": ""},
+    {"type": "compare", "heading": "Compare", "question": "Which animal is taller?", "items": ["elephant","giraffe","dog"], "choices": ["A = elephant","B = giraffe","C = dog"], "instruction": "Choose the correct answer.", "answer": "B (giraffe)", "explanation": "A giraffe is taller than an elephant or a dog."},
+    {"type": "matrix", "heading": "Matrix", "question": "What comes next?", "items": ["red circle","blue circle","red square","blank"], "choices": ["A = blue square","B = red circle","C = blue circle"], "instruction": "Choose the correct answer.", "answer": "A", "explanation": ""}
+  ]
+}

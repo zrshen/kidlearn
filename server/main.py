@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import flashcard_lib
+import gt_lib
 
 app = FastAPI()
 
@@ -100,6 +101,69 @@ def batch(req: BatchRequest) -> dict:
             },
         )
     return {"batches": [_translate_entry(c) for c in completed]}
+
+
+class GtSuggestRequest(BaseModel):
+    topic: Annotated[str | None, Field(default=None, max_length=100)] = None
+    test: Annotated[str | None, Field(default=None, max_length=60)] = None
+    panels: Annotated[int | None, Field(default=None, ge=4, le=6)] = None
+
+
+@app.post("/api/gt/suggest")
+def gt_suggest(req: GtSuggestRequest) -> dict:
+    try:
+        spec = gt_lib.suggest_gt_spec(req.topic, req.test, req.panels)
+    except gt_lib.SuggestionError as e:
+        raise HTTPException(status_code=502, detail={"error": f"Couldn't generate GT worksheet: {e.reason}"})
+    return {"spec": spec}
+
+
+class GtGenerateRequest(BaseModel):
+    spec: dict
+    quality: Quality = "medium"
+
+
+@app.post("/api/gt/generate")
+def gt_generate(req: GtGenerateRequest) -> dict:
+    try:
+        return gt_lib.generate_gt_pair(req.spec, quality=req.quality)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": f"invalid spec: {e}"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": f"image generation failed: {e}"})
+
+
+class GtBatchRequest(BaseModel):
+    topic: Annotated[str | None, Field(default=None, max_length=100)] = None
+    test: Annotated[str | None, Field(default=None, max_length=60)] = None
+    n: Annotated[int, Field(ge=1, le=10)]
+    panels: Annotated[int | None, Field(default=None, ge=4, le=6)] = None
+    quality: Quality = "medium"
+
+
+@app.post("/api/gt/batch")
+def gt_batch(req: GtBatchRequest) -> dict:
+    try:
+        completed = gt_lib.batch_generate_gt(
+            n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels
+        )
+    except gt_lib.PartialBatchError as e:
+        raise HTTPException(status_code=502, detail={"error": e.reason, "completed": e.completed})
+    return {"batches": completed}
+
+
+@app.get("/api/gt/generated")
+def gt_generated() -> dict:
+    return {"items": gt_lib.list_gt_pairs()}
+
+
+class GtDeleteRequest(BaseModel):
+    ids: Annotated[list[str], Field(min_length=1, max_length=100)]
+
+
+@app.post("/api/gt/generated/delete")
+def gt_delete(req: GtDeleteRequest) -> dict:
+    return gt_lib.delete_gt(req.ids)
 
 
 from fastapi.staticfiles import StaticFiles

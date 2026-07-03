@@ -17,6 +17,22 @@ export function HistorySidebar({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
+
+  async function handleQuickDelete(filename: string) {
+    setDeletingFilename(filename);
+    try {
+      await onDelete([filename]);
+      setChecked((prev) => {
+        if (!prev.has(filename)) return prev;
+        const next = new Set(prev);
+        next.delete(filename);
+        return next;
+      });
+    } finally {
+      setDeletingFilename(null);
+    }
+  }
 
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -97,7 +113,7 @@ export function HistorySidebar({
 
           {visible.length === 0 && filter && (
             <p className="mt-3 text-sm text-ink-soft">
-              No worksheets match "{filter.trim()}".
+              No worksheets match &quot;{filter.trim()}&quot;.
             </p>
           )}
 
@@ -113,7 +129,7 @@ export function HistorySidebar({
               <button
                 type="button"
                 onClick={() => setConfirming(true)}
-                className="rounded-md border border-conflict-ink/30 bg-conflict-bg px-2.5 py-1 font-medium text-conflict-ink transition-colors hover:bg-conflict-ink hover:text-white"
+                className="rounded-md border border-conflict-ink/30 bg-conflict-bg px-2.5 py-1 font-medium text-conflict-ink transition-colors hover:bg-danger hover:text-white"
               >
                 Delete {checkedCount}
               </button>
@@ -132,7 +148,7 @@ export function HistorySidebar({
                   type="button"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="rounded-md bg-conflict-ink px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-ink disabled:opacity-50"
+                  className="rounded-md bg-danger px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-primary disabled:opacity-50"
                 >
                   {deleting ? "Deleting…" : "Confirm"}
                 </button>
@@ -200,6 +216,15 @@ export function HistorySidebar({
                                 {formatTime(e.mtime)}
                               </span>
                             </span>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete worksheet ${e.word}`}
+                            onClick={() => void handleQuickDelete(e.filename)}
+                            disabled={deletingFilename === e.filename}
+                            className="shrink-0 rounded p-1 text-ink-faint opacity-0 transition-opacity hover:text-conflict-ink focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                          >
+                            <span aria-hidden className="text-sm leading-none">🗑</span>
                           </button>
                         </div>
                       </li>
