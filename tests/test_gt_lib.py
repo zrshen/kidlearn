@@ -404,3 +404,93 @@ def test_delete_gt_rejects_unsafe_ids(gt_gen_dir):
     # Path-traversal / out-of-grammar ids are silently skipped, never deleted.
     out = gt_lib.delete_gt(["../secret", "BAD", "a/b", ".."])
     assert out == {"deleted": []}
+
+
+def _pass_result():
+    return {"passed": True, "mismatches": []}
+
+
+def _fail_result(panel=2, note="expected 3 pumpkins, saw 4"):
+    return {"passed": False, "mismatches": [{"panel": panel, "note": note}]}
+
+
+def test_verify_image_real_call_sends_scene_and_image():
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(_pass_result())))]
+    )
+    panels = [_panel(scene="three orange pumpkins in a row")]
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        result = gt_lib.verify_image(PNG_BYTES, panels, attempt=1)
+    assert result == {"passed": True, "mismatches": []}
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == gt_lib.VERIFY_MODEL
+    content = kwargs["messages"][-1]["content"]
+    text_parts = [c["text"] for c in content if c["type"] == "text"]
+    assert "three orange pumpkins in a row" in "\n".join(text_parts)
+    image_parts = [c for c in content if c["type"] == "image_url"]
+    assert image_parts and image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_verify_image_falls_back_to_question_when_scene_missing():
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(_pass_result())))]
+    )
+    panels = [_panel(scene="", question="Which one does not belong?")]
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        gt_lib.verify_image(PNG_BYTES, panels, attempt=1)
+    kwargs = client.chat.completions.create.call_args.kwargs
+    text_parts = [c["text"] for c in kwargs["messages"][-1]["content"] if c["type"] == "text"]
+    assert "Which one does not belong?" in "\n".join(text_parts)
+
+
+def test_verify_image_stub_single_object_used_for_every_attempt(monkeypatch, tmp_path):
+    stub_path = tmp_path / "verify.json"
+    stub_path.write_text(json.dumps(_fail_result()))
+    monkeypatch.setenv("GT_STUB_VERIFY", str(stub_path))
+    crash = MagicMock()
+    crash.chat.completions.create.side_effect = AssertionError("should not call OpenAI")
+    with patch.object(gt_lib, "_openai_client", lambda: crash):
+        r1 = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1)
+        r2 = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=3)
+    assert r1["passed"] is False and r2["passed"] is False
+
+
+def test_verify_image_stub_list_indexed_by_attempt_and_repeats_last(monkeypatch, tmp_path):
+    stub_path = tmp_path / "verify.json"
+    stub_path.write_text(json.dumps([_fail_result(), _pass_result()]))
+    monkeypatch.setenv("GT_STUB_VERIFY", str(stub_path))
+    with patch.object(gt_lib, "_openai_client", lambda: MagicMock()):
+        r1 = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1)
+        r2 = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=2)
+        r3 = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=3)  # beyond list length: repeats last
+    assert r1["passed"] is False
+    assert r2["passed"] is True
+    assert r3["passed"] is True
+
+
+def test_revise_prompt_includes_mismatches_and_original():
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content="REVISED PROMPT TEXT"))]
+    )
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        out = gt_lib.revise_prompt("ORIGINAL PROMPT TEXT", [{"panel": 2, "note": "saw 4 pumpkins, expected 3"}])
+    assert out == "REVISED PROMPT TEXT"
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == gt_lib.REVISE_MODEL
+    user_msg = kwargs["messages"][-1]["content"]
+    assert "ORIGINAL PROMPT TEXT" in user_msg
+    assert "saw 4 pumpkins, expected 3" in user_msg
+    assert "Panel 2" in user_msg
+
+
+def test_revise_prompt_raises_on_empty_response():
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=""))]
+    )
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(RuntimeError, match="no content"):
+            gt_lib.revise_prompt("prompt", [{"panel": 1, "note": "x"}])

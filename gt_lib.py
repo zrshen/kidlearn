@@ -1,6 +1,7 @@
 """GT (gifted-and-talented) thinking worksheet generator. No FastAPI/CLI imports."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import random
@@ -135,6 +136,10 @@ def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
 SUGGEST_MODEL = "gpt-5.5"
 SUGGEST_REASONING_EFFORT = "medium"
 SUGGEST_MAX_RETRIES = 3
+
+VERIFY_MODEL = SUGGEST_MODEL  # gpt-5.5 — confirmed vision-capable in Task 1; reused rather than qualifying a second model
+REVISE_MODEL = SUGGEST_MODEL  # gpt-5.5, text-only prompt revision
+MAX_ATTEMPTS = 3  # 1 initial render + 2 retries, per side
 
 # Untopic'd worksheets rotate through these so unspecified-topic batches differ.
 THEME_POOL = [
@@ -372,6 +377,97 @@ BOTTOM BANNER: "Great job! Keep thinking and learning!"
 
 IMPORTANT:
 - BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
+
+
+def verify_image(image_bytes: bytes, panels: list[dict], attempt: int) -> dict:
+    """One vision call: does the rendered image match each panel's stated scene
+    (object counts, specifically)? Returns {"passed": bool, "mismatches": [...]}.
+    `attempt` is 1-based and only used to index GT_STUB_VERIFY fixtures."""
+    stub = os.environ.get("GT_STUB_VERIFY")
+    if stub:
+        results = json.loads(Path(stub).read_text())
+        if isinstance(results, list):
+            return results[min(attempt - 1, len(results) - 1)]
+        return results
+
+    scenes = "\n".join(
+        f"Panel {i}: {p.get('scene') or p['question']}"
+        for i, p in enumerate(panels, start=1)
+    )
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You check that a generated worksheet image matches its intended "
+                "content. Respond with JSON only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Here is what each numbered panel is supposed to show:\n\n"
+                        f"{scenes}\n\n"
+                        "Look at the attached image. For each panel, check ONLY whether the "
+                        "number of objects/items drawn matches what's described above — ignore "
+                        "art style, color accuracy, and anything else. Return JSON exactly: "
+                        '{"passed": true|false, "mismatches": '
+                        '[{"panel": <1-based int>, "note": "<what you saw vs. expected>"}]}. '
+                        "passed is true only if mismatches is empty."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                },
+            ],
+        },
+    ]
+    resp = _openai_client().chat.completions.create(
+        model=VERIFY_MODEL,
+        messages=messages,
+        response_format={"type": "json_object"},
+    )
+    content = resp.choices[0].message.content
+    if not content:
+        raise RuntimeError("verify_image call returned no content")
+    result = json.loads(content)
+    return {"passed": bool(result.get("passed")), "mismatches": result.get("mismatches") or []}
+
+
+def revise_prompt(prev_prompt: str, mismatches: list[dict]) -> str:
+    """One text-only call producing a corrected full-image prompt: same content,
+    but with the mismatched panel(s) made unmistakably explicit about the count."""
+    notes = "\n".join(f"- Panel {m['panel']}: {m['note']}" for m in mismatches)
+    messages = [
+        {
+            "role": "system",
+            "content": "You refine gpt-image-2 prompts for a Kindergarten worksheet generator.",
+        },
+        {
+            "role": "user",
+            "content": f"""The following image prompt was used to render a worksheet, but the
+generated image did not match the intended content for these panels:
+
+{notes}
+
+ORIGINAL PROMPT:
+{prev_prompt}
+
+Rewrite the ENTIRE prompt, keeping everything else the same, but make the corrected panel(s)
+unmistakably explicit about the exact count/detail that was wrong — repeat the correct count in
+plain words (e.g. "exactly three pumpkins — not four, not two") so the image model cannot get it
+wrong again. Return the full corrected prompt text only, no commentary.""",
+        },
+    ]
+    resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages)
+    content = resp.choices[0].message.content
+    if not content or not content.strip():
+        raise RuntimeError("revise_prompt call returned no content")
+    return content
 
 
 def _slug(theme: str) -> str:
