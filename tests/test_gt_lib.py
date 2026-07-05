@@ -35,6 +35,19 @@ def _spec(panels=None):
     }
 
 
+@pytest.fixture(autouse=True)
+def _stub_verify_always_passes(monkeypatch, tmp_path):
+    """generate_gt_pair now calls verify_image on every render. Default it to
+    "always passes" so the many existing tests that don't care about
+    verification don't hit the real OpenAI API. Tests that DO exercise
+    verification/retry behavior override this via
+    patch.object(gt_lib, "verify_image", ...), which takes priority over the
+    env var since it replaces the function itself."""
+    always_pass = tmp_path / "verify_pass.json"
+    always_pass.write_text(json.dumps({"passed": True, "mismatches": []}))
+    monkeypatch.setenv("GT_STUB_VERIFY", str(always_pass))
+
+
 def test_general_catalog_has_expected_seed_types():
     for t in ["odd_one_out", "pattern", "analogy", "sequence", "compare", "matrix"]:
         assert t in gt_lib.GENERAL_CATALOG
@@ -414,7 +427,10 @@ def _fail_result(panel=2, note="expected 3 pumpkins, saw 4"):
     return {"passed": False, "mismatches": [{"panel": panel, "note": note}]}
 
 
-def test_verify_image_real_call_sends_scene_and_image():
+def test_verify_image_real_call_sends_scene_and_image(monkeypatch):
+    # This test exercises verify_image's real (non-stub) code path, so it must
+    # override the autouse _stub_verify_always_passes fixture's GT_STUB_VERIFY.
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(
         choices=[MagicMock(message=MagicMock(content=json.dumps(_pass_result())))]
@@ -432,7 +448,10 @@ def test_verify_image_real_call_sends_scene_and_image():
     assert image_parts and image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
-def test_verify_image_falls_back_to_question_when_scene_missing():
+def test_verify_image_falls_back_to_question_when_scene_missing(monkeypatch):
+    # This test exercises verify_image's real (non-stub) code path, so it must
+    # override the autouse _stub_verify_always_passes fixture's GT_STUB_VERIFY.
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(
         choices=[MagicMock(message=MagicMock(content=json.dumps(_pass_result())))]
@@ -494,3 +513,70 @@ def test_revise_prompt_raises_on_empty_response():
     with patch.object(gt_lib, "_openai_client", lambda: client):
         with pytest.raises(RuntimeError, match="no content"):
             gt_lib.revise_prompt("prompt", [{"panel": 1, "note": "x"}])
+
+
+def test_generate_gt_pair_emits_generate_and_verify_events_on_first_pass(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    events = []
+    gt_lib.generate_gt_pair(_spec(), quality="low", on_event=events.append)
+    kinds = [(e["type"], e.get("side"), e.get("attempt")) for e in events]
+    assert kinds == [
+        ("generate", "front", 1),
+        ("verify_result", "front", 1),
+        ("generate", "back", 1),
+        ("verify_result", "back", 1),
+    ]
+    assert all(e["passed"] for e in events if e["type"] == "verify_result")
+
+
+def test_generate_gt_pair_retries_once_then_passes(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    fail = {"passed": False, "mismatches": [{"panel": 1, "note": "saw 4, expected 3"}]}
+    ok = {"passed": True, "mismatches": []}
+    with patch.object(gt_lib, "verify_image", side_effect=[fail, ok, ok]), \
+         patch.object(gt_lib, "revise_prompt", return_value="REVISED FRONT PROMPT") as revise:
+        events = []
+        result = gt_lib.generate_gt_pair(_spec(), quality="low", on_event=events.append)
+    assert result["id"]
+    revise.assert_called_once()
+    kinds = [(e["type"], e.get("side"), e.get("attempt")) for e in events]
+    assert kinds == [
+        ("generate", "front", 1),
+        ("verify_result", "front", 1),
+        ("retry", "front", 2),
+        ("generate", "front", 2),
+        ("verify_result", "front", 2),
+        ("generate", "back", 1),
+        ("verify_result", "back", 1),
+    ]
+
+
+def test_generate_gt_pair_front_exhausts_retries_raises_and_writes_nothing(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    fail = {"passed": False, "mismatches": [{"panel": 1, "note": "still wrong"}]}
+    with patch.object(gt_lib, "verify_image", return_value=fail), \
+         patch.object(gt_lib, "revise_prompt", return_value="REVISED PROMPT"):
+        with pytest.raises(gt_lib.VerificationFailedError):
+            gt_lib.generate_gt_pair(_spec(), quality="low")
+    assert list(gt_gen_dir.glob("gt-*")) == []
+
+
+def test_generate_gt_pair_back_exhausts_retries_cleans_up_front(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    ok = {"passed": True, "mismatches": []}
+    fail = {"passed": False, "mismatches": [{"panel": 1, "note": "still wrong"}]}
+    with patch.object(gt_lib, "verify_image", side_effect=[ok, fail, fail, fail]), \
+         patch.object(gt_lib, "revise_prompt", return_value="REVISED PROMPT"):
+        with pytest.raises(gt_lib.VerificationFailedError):
+            gt_lib.generate_gt_pair(_spec(), quality="low")
+    assert list(gt_gen_dir.glob("gt-*")) == []
+
+
+def test_max_attempts_is_three():
+    assert gt_lib.MAX_ATTEMPTS == 3
+
+
+def test_verification_failed_error_carries_mismatches():
+    mismatches = [{"panel": 2, "note": "x"}]
+    err = gt_lib.VerificationFailedError(mismatches)
+    assert err.mismatches == mismatches

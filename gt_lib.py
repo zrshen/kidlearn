@@ -470,6 +470,33 @@ wrong again. Return the full corrected prompt text only, no commentary.""",
     return content
 
 
+class VerificationFailedError(Exception):
+    def __init__(self, mismatches: list[dict]) -> None:
+        super().__init__(f"image verification failed after {MAX_ATTEMPTS} attempts: {mismatches}")
+        self.mismatches = mismatches
+
+
+def _generate_verified_side(prompt: str, panels: list[dict], quality: Quality, side: str, on_event) -> bytes:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        on_event({"type": "generate", "side": side, "attempt": attempt})
+        image_bytes = produce_png_bytes(prompt, quality, "GT_STUB_IMAGE", _openai_client)
+        result = verify_image(image_bytes, panels, attempt)
+        on_event({
+            "type": "verify_result",
+            "side": side,
+            "attempt": attempt,
+            "passed": result["passed"],
+            "mismatches": result["mismatches"],
+        })
+        if result["passed"]:
+            return image_bytes
+        if attempt == MAX_ATTEMPTS:
+            raise VerificationFailedError(result["mismatches"])
+        on_event({"type": "retry", "side": side, "attempt": attempt + 1})
+        prompt = revise_prompt(prompt, result["mismatches"])
+    raise AssertionError("unreachable")  # loop always returns or raises
+
+
 def _slug(theme: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (theme or "gt").lower()).strip("-")
     return s or "gt"
@@ -479,7 +506,8 @@ def _new_id(theme: str) -> str:
     return f"{_slug(theme)}-{int(time.time() * 1000)}"
 
 
-def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
+def generate_gt_pair(spec: dict, quality: Quality = "medium", on_event=None) -> dict:
+    emit = on_event or (lambda e: None)
     validate_spec(spec)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     theme = str(spec.get("theme", ""))
@@ -488,10 +516,10 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
     back_path = GENERATED_DIR / f"gt-{gid}-back.png"
     manifest_path = GENERATED_DIR / f"gt-{gid}.json"
 
-    front_bytes = produce_png_bytes(render_front_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    front_bytes = _generate_verified_side(render_front_prompt(spec), spec["panels"], quality, "front", emit)
     front_path.write_bytes(front_bytes)
     try:
-        back_bytes = produce_png_bytes(render_back_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+        back_bytes = _generate_verified_side(render_back_prompt(spec), spec["panels"], quality, "back", emit)
     except Exception:
         front_path.unlink(missing_ok=True)
         raise
