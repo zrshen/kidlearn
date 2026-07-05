@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
-import { batchGt, generateGt, suggestGt, type GtPair, type GtSpec, type Quality } from "../app/api";
+import { batchGt, generateGt, suggestGt, type GtPair, type GtProgressEvent, type GtSpec, type Quality } from "../app/api";
 import { clampInt } from "../app/clamp";
 
 type Banner = { kind: "none" } | { kind: "error"; message: string };
@@ -22,6 +22,37 @@ const BATCH_CONFIRM_THRESHOLD = 3;
 const PANELS_MIN = 4;
 const PANELS_MAX = 6;
 const PANELS_DEFAULT = 4;
+
+type LogEntry = { text: string; kind: "info" | "success" | "error" };
+
+function eventToLogLine(e: GtProgressEvent): LogEntry | null {
+  switch (e.type) {
+    case "generate":
+      return {
+        text: `⏳ ${e.side === "front" ? "Drawing front page" : "Drawing back page"} (attempt ${e.attempt})…`,
+        kind: "info",
+      };
+    case "verify_result":
+      if (e.passed) {
+        return { text: `✓  ${e.side === "front" ? "Front" : "Back"} page verified`, kind: "success" };
+      } else {
+        const m = e.mismatches[0];
+        const note = m ? `panel ${m.panel}: ${m.note}` : "mismatch found";
+        return { text: `✗  ${e.side === "front" ? "Front" : "Back"} page check failed — ${note}`, kind: "error" };
+      }
+    case "retry":
+      return {
+        text: `⏳ ${e.side === "front" ? "Redrawing front page" : "Redrawing back page"} (attempt ${e.attempt})…`,
+        kind: "info",
+      };
+    case "done":
+      return { text: "✓  Done", kind: "success" };
+    case "error":
+      return { text: `✗  ${e.message}`, kind: "error" };
+    default:
+      return null;
+  }
+}
 
 export function GtView({
   topic,
@@ -48,6 +79,7 @@ export function GtView({
   const [pendingBatchConfirm, setPendingBatchConfirm] = useState(false);
   const [printScope, setPrintScope] = useState<PrintScope>("both");
   const [printNonce, setPrintNonce] = useState(0);
+  const [progressLog, setProgressLog] = useState<LogEntry[]>([]);
   const effectiveTest = customTest.trim() || builtinTest;
   const usingCustom = customTest.trim().length > 0;
   const abortRef = useRef<AbortController | null>(null);
@@ -112,6 +144,7 @@ export function GtView({
     setPair(null);
     setSpec(null);
     setBatchPairs([]);
+    setProgressLog([]);
     setBusy(true);
     const signal = startWork();
     const sug = await suggestGt(topic.trim() || null, effectiveTest, clampedPanels(), signal);
@@ -123,7 +156,10 @@ export function GtView({
       return;
     }
     setSpec(sug.spec);
-    const gen = await generateGt(sug.spec, quality, signal);
+    const gen = await generateGt(sug.spec, quality, signal, (e) => {
+      const line = eventToLogLine(e);
+      if (line) setProgressLog((prev) => [...prev, line]);
+    });
     if (signal.aborted) return;
     setBusy(false);
     if (gen.ok) {
@@ -294,6 +330,8 @@ export function GtView({
         </div>
       )}
 
+      <ProgressLog entries={progressLog} />
+
       {spec && <SpecPeek spec={spec} />}
 
       {pair && (
@@ -331,6 +369,22 @@ function SpecPeek({ spec }: { spec: GtSpec }) {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ProgressLog({ entries }: { entries: LogEntry[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <div
+      className="mb-6 rounded-xl border border-border bg-surface px-4 py-3 font-mono text-[0.78rem] leading-relaxed"
+      data-testid="gt-progress-log"
+    >
+      {entries.map((e, i) => (
+        <div key={i} className={e.kind === "error" ? "text-danger" : e.kind === "success" ? "text-success-ink" : "text-ink-soft"}>
+          {e.text}
+        </div>
+      ))}
     </div>
   );
 }

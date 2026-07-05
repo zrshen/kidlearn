@@ -17,6 +17,42 @@ describe("GtView", () => {
     expect((screen.getByTestId("gt-back") as HTMLImageElement).src).toMatch(/gt-fruits-1-back\.png/);
   });
 
+  it("shows a step-by-step progress log during Suggest & Generate", async () => {
+    const { http } = await import("msw");
+    const { mswServer } = await import("./setup");
+    const { ndjson } = await import("./handlers");
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/generate", () =>
+        ndjson([
+          { type: "generate", side: "front", attempt: 1 },
+          { type: "verify_result", side: "front", attempt: 1, passed: true, mismatches: [] },
+          { type: "generate", side: "back", attempt: 1 },
+          { type: "verify_result", side: "back", attempt: 1, passed: true, mismatches: [] },
+          {
+            type: "done",
+            pair: { id: "fruits-1", front_url: "/generated/gt-fruits-1-front.png", back_url: "/generated/gt-fruits-1-back.png" },
+          },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await screen.findByTestId("gt-front");
+    const log = screen.getByTestId("gt-progress-log");
+    expect(log.textContent).toMatch(/front page verified/i);
+    expect(log.textContent).toMatch(/back page verified/i);
+    expect(log.textContent).toMatch(/done/i);
+  });
+
+  it("keeps the progress log visible after generation completes", async () => {
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await screen.findByTestId("gt-front");
+    expect(screen.getByTestId("gt-progress-log")).toBeInTheDocument();
+  });
+
   it("shows an error banner when suggest fails", async () => {
     const { http, HttpResponse } = await import("msw");
     const { mswServer } = await import("./setup");
