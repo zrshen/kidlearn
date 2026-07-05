@@ -13,6 +13,63 @@ function isAbort(e: unknown): boolean {
   return e instanceof DOMException && e.name === "AbortError";
 }
 
+type GtWireEvent =
+  | { type: "step"; message: string; index?: number }
+  | { type: "content_ready"; theme: string; panels: number; index?: number }
+  | { type: "generate"; side: "front" | "back"; attempt: number; index?: number }
+  | {
+      type: "verify_result";
+      side: "front" | "back";
+      attempt: number;
+      passed: boolean;
+      mismatches: { panel: number; note: string }[];
+      index?: number;
+    }
+  | { type: "retry"; side: "front" | "back"; attempt: number; index?: number }
+  | { type: "done"; pair: GtPairRaw; index?: number }
+  | { type: "error"; message: string }
+  | { type: "batch_done" };
+
+export type GtProgressEvent =
+  | { type: "step"; message: string; index?: number }
+  | { type: "content_ready"; theme: string; panels: number; index?: number }
+  | { type: "generate"; side: "front" | "back"; attempt: number; index?: number }
+  | {
+      type: "verify_result";
+      side: "front" | "back";
+      attempt: number;
+      passed: boolean;
+      mismatches: { panel: number; note: string }[];
+      index?: number;
+    }
+  | { type: "retry"; side: "front" | "back"; attempt: number; index?: number }
+  | { type: "done"; pair: GtPair; index?: number }
+  | { type: "error"; message: string }
+  | { type: "batch_done" };
+
+async function readNdjson(
+  body: ReadableStream<Uint8Array> | null,
+  onLine: (raw: GtWireEvent) => void,
+): Promise<void> {
+  if (!body) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (line) onLine(JSON.parse(line) as GtWireEvent);
+    }
+  }
+  const rest = buf.trim();
+  if (rest) onLine(JSON.parse(rest) as GtWireEvent);
+}
+
 export async function fetchUsedWords(): Promise<string[]> {
   const r = await fetch(`${API}/api/used-words`);
   if (!r.ok) throw new Error(`used-words ${r.status}`);
@@ -249,6 +306,7 @@ export async function generateGt(
   spec: GtSpec,
   quality: Quality = "medium",
   signal?: AbortSignal,
+  onEvent?: (e: GtProgressEvent) => void,
 ): Promise<GtGenerateResult> {
   let r: Response;
   try {
@@ -262,12 +320,31 @@ export async function generateGt(
     if (isAbort(e)) return { ok: false, kind: "cancelled" };
     return { ok: false, kind: "error", message: "Could not reach server. Is the backend running?" };
   }
-  if (r.status === 200) {
-    const j = (await r.json()) as GtPairRaw;
-    return { ok: true, pair: toGtPair(j) };
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, kind: "error", message: j.error ?? `server ${r.status}` };
   }
-  const j = (await r.json().catch(() => ({}))) as { error?: string };
-  return { ok: false, kind: "error", message: j.error ?? `server ${r.status}` };
+  let pair: GtPair | null = null;
+  let errorMessage: string | null = null;
+  try {
+    await readNdjson(r.body, (raw) => {
+      if (raw.type === "done") {
+        pair = toGtPair(raw.pair);
+        onEvent?.({ type: "done", pair, index: raw.index });
+      } else if (raw.type === "error") {
+        errorMessage = raw.message;
+        onEvent?.(raw);
+      } else {
+        onEvent?.(raw);
+      }
+    });
+  } catch (e) {
+    if (isAbort(e)) return { ok: false, kind: "cancelled" };
+    throw e;
+  }
+  if (errorMessage) return { ok: false, kind: "error", message: errorMessage };
+  if (!pair) return { ok: false, kind: "error", message: "stream ended without a result" };
+  return { ok: true, pair };
 }
 
 export type GtBatchResult =
@@ -282,6 +359,7 @@ export async function batchGt(
   panels: number | null = null,
   quality: Quality = "medium",
   signal?: AbortSignal,
+  onEvent?: (e: GtProgressEvent) => void,
 ): Promise<GtBatchResult> {
   let r: Response;
   try {
@@ -295,15 +373,31 @@ export async function batchGt(
     if (isAbort(e)) return { ok: false, cancelled: true };
     return { ok: false, message: "Could not reach server. Is the backend running?", completed: [] };
   }
-  if (r.status === 200) {
-    const j = (await r.json()) as { batches: GtPairRaw[] };
-    return { ok: true, batches: j.batches.map(toGtPair) };
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, message: j.error ?? `server ${r.status}`, completed: [] };
   }
-  const j = (await r.json().catch(() => ({}))) as {
-    error?: string;
-    completed?: GtPairRaw[];
-  };
-  return { ok: false, message: j.error ?? `server ${r.status}`, completed: (j.completed ?? []).map(toGtPair) };
+  const completed: GtPair[] = [];
+  let errorMessage: string | null = null;
+  try {
+    await readNdjson(r.body, (raw) => {
+      if (raw.type === "done") {
+        const pair = toGtPair(raw.pair);
+        completed.push(pair);
+        onEvent?.({ type: "done", pair, index: raw.index });
+      } else if (raw.type === "error") {
+        errorMessage = raw.message;
+        onEvent?.(raw);
+      } else {
+        onEvent?.(raw);
+      }
+    });
+  } catch (e) {
+    if (isAbort(e)) return { ok: false, cancelled: true };
+    throw e;
+  }
+  if (errorMessage) return { ok: false, message: errorMessage, completed };
+  return { ok: true, batches: completed };
 }
 
 export type GtHistoryEntry = GtPair & { mtime: number };
