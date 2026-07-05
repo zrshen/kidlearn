@@ -426,22 +426,33 @@ def verify_image(image_bytes: bytes, panels: list[dict], attempt: int) -> dict:
             ],
         },
     ]
-    resp = _openai_client().chat.completions.create(
-        model=VERIFY_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
-    content = resp.choices[0].message.content
-    if not content:
-        raise RuntimeError("verify_image call returned no content")
-    result = json.loads(content)
-    return {"passed": bool(result.get("passed")), "mismatches": result.get("mismatches") or []}
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(
+                model=VERIFY_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content
+            if not content:
+                last_reason = "empty response from model"
+                continue
+            result = json.loads(content)
+            return {"passed": bool(result.get("passed")), "mismatches": result.get("mismatches") or []}
+        except json.JSONDecodeError as e:
+            last_reason = f"could not parse model response: {e}"
+            continue
+        except OpenAIError as e:
+            last_reason = f"model request failed: {e}"
+            continue
+    raise RuntimeError(f"verify_image failed after {SUGGEST_MAX_RETRIES + 1} attempts: {last_reason}")
 
 
 def revise_prompt(prev_prompt: str, mismatches: list[dict]) -> str:
     """One text-only call producing a corrected full-image prompt: same content,
     but with the mismatched panel(s) made unmistakably explicit about the count."""
-    notes = "\n".join(f"- Panel {m['panel']}: {m['note']}" for m in mismatches)
+    notes = "\n".join(f"- Panel {m.get('panel', '?')}: {m.get('note', 'mismatch')}" for m in mismatches)
     messages = [
         {
             "role": "system",
@@ -463,11 +474,19 @@ plain words (e.g. "exactly three pumpkins — not four, not two") so the image m
 wrong again. Return the full corrected prompt text only, no commentary.""",
         },
     ]
-    resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages)
-    content = resp.choices[0].message.content
-    if not content or not content.strip():
-        raise RuntimeError("revise_prompt call returned no content")
-    return content
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages)
+            content = resp.choices[0].message.content
+            if not content or not content.strip():
+                last_reason = "empty response from model"
+                continue
+            return content
+        except OpenAIError as e:
+            last_reason = f"model request failed: {e}"
+            continue
+    raise RuntimeError(f"revise_prompt failed after {SUGGEST_MAX_RETRIES + 1} attempts: {last_reason}")
 
 
 class VerificationFailedError(Exception):

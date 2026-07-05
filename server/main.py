@@ -110,26 +110,50 @@ def batch(req: BatchRequest) -> dict:
     return {"batches": [_translate_entry(c) for c in completed]}
 
 
+class _ClientDisconnected(BaseException):
+    """Signals the worker thread to stop once the client has gone away.
+
+    Extends BaseException (not Exception) so it passes through target's own
+    `except Exception`/`except PartialBatchError` blocks unhandled, reaching
+    only worker()'s own handler below."""
+
+
 def _run_streaming(target: Callable[[Callable[[dict], None]], None]) -> Iterator[str]:
     """Run `target(emit)` on a background thread, yielding each event `target`
     emits as an NDJSON line as soon as it's emitted. `target` must catch its
     own domain errors and emit a final {"type": "error"|"done"|"batch_done"}
-    event itself — this helper only handles the thread/queue plumbing."""
+    event itself — this helper only handles the thread/queue plumbing.
+
+    If the client disconnects (the generator is closed early), further calls
+    to `emit` raise _ClientDisconnected so the worker thread stops making
+    OpenAI calls at its next progress checkpoint instead of running to
+    completion unobserved."""
     q: queue.Queue = queue.Queue()
     sentinel = object()
+    client_gone = threading.Event()
+
+    def emit(item: dict) -> None:
+        if client_gone.is_set():
+            raise _ClientDisconnected()
+        q.put(item)
 
     def worker() -> None:
         try:
-            target(q.put)
+            target(emit)
+        except _ClientDisconnected:
+            pass
         finally:
             q.put(sentinel)
 
     threading.Thread(target=worker, daemon=True).start()
-    while True:
-        item = q.get()
-        if item is sentinel:
-            return
-        yield json.dumps(item) + "\n"
+    try:
+        while True:
+            item = q.get()
+            if item is sentinel:
+                return
+            yield json.dumps(item) + "\n"
+    finally:
+        client_gone.set()
 
 
 class GtSuggestRequest(BaseModel):
@@ -184,6 +208,8 @@ def gt_batch(req: GtBatchRequest) -> StreamingResponse:
             )
         except gt_lib.PartialBatchError as e:
             emit({"type": "error", "message": e.reason})
+        except Exception as e:
+            emit({"type": "error", "message": f"batch generation failed: {e}"})
         else:
             emit({"type": "batch_done"})
 

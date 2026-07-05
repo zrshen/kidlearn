@@ -222,6 +222,9 @@ export function GtView({
       onGenerated?.();
     } else if (!("cancelled" in res)) {
       if (res.completed.length > 0) onGenerated?.();
+      // Stop rendering placeholders for items that will never complete.
+      setBatchTotal(res.completed.length);
+      setCurrentBatchStatus("");
       setBanner({ kind: "error", message: res.message });
     }
   }

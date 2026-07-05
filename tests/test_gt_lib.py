@@ -547,8 +547,76 @@ def test_revise_prompt_raises_on_empty_response():
         choices=[MagicMock(message=MagicMock(content=""))]
     )
     with patch.object(gt_lib, "_openai_client", lambda: client):
-        with pytest.raises(RuntimeError, match="no content"):
+        with pytest.raises(RuntimeError, match="empty response from model"):
             gt_lib.revise_prompt("prompt", [{"panel": 1, "note": "x"}])
+
+
+def test_revise_prompt_tolerates_malformed_mismatch_entries():
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content="REVISED PROMPT TEXT"))]
+    )
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        # A vision-model response that deviates from the requested schema
+        # (missing "panel"/"note" keys) must not raise a raw KeyError.
+        out = gt_lib.revise_prompt("prompt", [{"index": 2, "detail": "wrong count"}])
+    assert out == "REVISED PROMPT TEXT"
+
+
+def test_revise_prompt_retries_on_transient_error_then_succeeds():
+    from openai import OpenAIError
+
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        OpenAIError("rate limited"),
+        MagicMock(choices=[MagicMock(message=MagicMock(content="REVISED PROMPT TEXT"))]),
+    ]
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        out = gt_lib.revise_prompt("prompt", [{"panel": 1, "note": "x"}])
+    assert out == "REVISED PROMPT TEXT"
+    assert client.chat.completions.create.call_count == 2
+
+
+def test_revise_prompt_retries_then_raises_on_persistent_transient_error():
+    from openai import OpenAIError
+
+    client = MagicMock()
+    client.chat.completions.create.side_effect = OpenAIError("rate limited")
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(RuntimeError, match="model request failed"):
+            gt_lib.revise_prompt("prompt", [{"panel": 1, "note": "x"}])
+    assert client.chat.completions.create.call_count == gt_lib.SUGGEST_MAX_RETRIES + 1
+
+
+def test_verify_image_retries_on_transient_error_then_succeeds(monkeypatch):
+    from openai import OpenAIError
+
+    # This test exercises verify_image's real (non-stub) code path, so it must
+    # override the autouse _stub_verify_always_passes fixture's GT_STUB_VERIFY.
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        OpenAIError("rate limited"),
+        MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps(_pass_result())))]),
+    ]
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        result = gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1)
+    assert result == {"passed": True, "mismatches": []}
+    assert client.chat.completions.create.call_count == 2
+
+
+def test_verify_image_retries_then_raises_on_persistent_transient_error(monkeypatch):
+    from openai import OpenAIError
+
+    # This test exercises verify_image's real (non-stub) code path, so it must
+    # override the autouse _stub_verify_always_passes fixture's GT_STUB_VERIFY.
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
+    client = MagicMock()
+    client.chat.completions.create.side_effect = OpenAIError("rate limited")
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(RuntimeError, match="model request failed"):
+            gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1)
+    assert client.chat.completions.create.call_count == gt_lib.SUGGEST_MAX_RETRIES + 1
 
 
 def test_generate_gt_pair_emits_generate_and_verify_events_on_first_pass(gt_gen_dir, monkeypatch):

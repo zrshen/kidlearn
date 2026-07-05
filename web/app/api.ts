@@ -13,7 +13,7 @@ function isAbort(e: unknown): boolean {
   return e instanceof DOMException && e.name === "AbortError";
 }
 
-type GtWireEvent =
+type GtEvent<Pair> =
   | { type: "step"; message: string; index?: number }
   | { type: "content_ready"; theme: string; panels: number; index?: number }
   | { type: "generate"; side: "front" | "back"; attempt: number; index?: number }
@@ -26,26 +26,12 @@ type GtWireEvent =
       index?: number;
     }
   | { type: "retry"; side: "front" | "back"; attempt: number; index?: number }
-  | { type: "done"; pair: GtPairRaw; index?: number }
+  | { type: "done"; pair: Pair; index?: number }
   | { type: "error"; message: string }
   | { type: "batch_done" };
 
-export type GtProgressEvent =
-  | { type: "step"; message: string; index?: number }
-  | { type: "content_ready"; theme: string; panels: number; index?: number }
-  | { type: "generate"; side: "front" | "back"; attempt: number; index?: number }
-  | {
-      type: "verify_result";
-      side: "front" | "back";
-      attempt: number;
-      passed: boolean;
-      mismatches: { panel: number; note: string }[];
-      index?: number;
-    }
-  | { type: "retry"; side: "front" | "back"; attempt: number; index?: number }
-  | { type: "done"; pair: GtPair; index?: number }
-  | { type: "error"; message: string }
-  | { type: "batch_done" };
+type GtWireEvent = GtEvent<GtPairRaw>;
+export type GtProgressEvent = GtEvent<GtPair>;
 
 async function readNdjson(
   body: ReadableStream<Uint8Array> | null,
