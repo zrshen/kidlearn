@@ -139,6 +139,33 @@ describe("GtView", () => {
     });
   });
 
+  it("still notifies onGenerated when a batch partially fails, so history refreshes", async () => {
+    const { http } = await import("msw");
+    const { mswServer } = await import("./setup");
+    const { ndjson } = await import("./handlers");
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/batch", () =>
+        ndjson([
+          {
+            type: "done",
+            index: 0,
+            pair: { id: "a-1", front_url: "/generated/gt-a-1-front.png", back_url: "/generated/gt-a-1-back.png" },
+          },
+          { type: "error", message: "Batch 2 of 2 failed: boom" },
+        ]),
+      ),
+    );
+    const onGenerated = vi.fn();
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" onGenerated={onGenerated} />);
+    const batchInput = screen.getByLabelText(/batches/i);
+    await user.clear(batchInput);
+    await user.type(batchInput, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(onGenerated).toHaveBeenCalledTimes(1));
+  });
+
   it("prints questions only when Print questions is clicked", async () => {
     const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
     const user = userEvent.setup();

@@ -221,6 +221,7 @@ export function GtView({
     if (res.ok) {
       onGenerated?.();
     } else if (!("cancelled" in res)) {
+      if (res.completed.length > 0) onGenerated?.();
       setBanner({ kind: "error", message: res.message });
     }
   }
