@@ -54,6 +54,27 @@ function eventToLogLine(e: GtProgressEvent): LogEntry | null {
   }
 }
 
+function batchBadgeText(e: GtProgressEvent): string | null {
+  switch (e.type) {
+    case "step":
+      return "Writing worksheet content…";
+    case "content_ready":
+      return `Content ready — ${e.theme}`;
+    case "generate":
+      return `Drawing ${e.side} (attempt ${e.attempt})…`;
+    case "verify_result":
+      return e.passed
+        ? `${e.side === "front" ? "Front" : "Back"} verified`
+        : `${e.side === "front" ? "Front" : "Back"} check failed`;
+    case "retry":
+      return `Retrying ${e.side} (attempt ${e.attempt})…`;
+    case "error":
+      return "Failed";
+    default:
+      return null;
+  }
+}
+
 export function GtView({
   topic,
   quality,
@@ -80,6 +101,8 @@ export function GtView({
   const [printScope, setPrintScope] = useState<PrintScope>("both");
   const [printNonce, setPrintNonce] = useState(0);
   const [progressLog, setProgressLog] = useState<LogEntry[]>([]);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [currentBatchStatus, setCurrentBatchStatus] = useState("");
   const effectiveTest = customTest.trim() || builtinTest;
   const usingCustom = customTest.trim().length > 0;
   const abortRef = useRef<AbortController | null>(null);
@@ -144,6 +167,7 @@ export function GtView({
     setPair(null);
     setSpec(null);
     setBatchPairs([]);
+    setBatchTotal(0);
     setProgressLog([]);
     setBusy(true);
     const signal = startWork();
@@ -174,23 +198,30 @@ export function GtView({
     setBanner({ kind: "none" });
     setPair(null);
     setSpec(null);
+    const total = clampedBatchN();
     setBatchPairs([]);
+    setBatchTotal(total);
+    setCurrentBatchStatus("");
+    setProgressLog([]);
     setBusy(true);
     setPendingBatchConfirm(false);
     const signal = startWork();
-    const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), clampedPanels(), quality, signal);
+    const res = await batchGt(topic.trim() || null, effectiveTest, total, clampedPanels(), quality, signal, (e) => {
+      if (e.type === "done") {
+        setBatchPairs((prev) => [...prev, e.pair]);
+        setCurrentBatchStatus("");
+        return;
+      }
+      const text = batchBadgeText(e);
+      if (text) setCurrentBatchStatus(text);
+    });
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     setBusy(false);
     if (res.ok) {
-      setBatchPairs(res.batches);
       onGenerated?.();
     } else if (!("cancelled" in res)) {
       setBanner({ kind: "error", message: res.message });
-      if (res.completed.length > 0) {
-        setBatchPairs(res.completed);
-        onGenerated?.();
-      }
     }
   }
 
@@ -341,9 +372,11 @@ export function GtView({
         </div>
       )}
 
-      {batchPairs.length > 0 && (
+      {batchTotal > 0 && (
         <GtBatchPreview
           pairs={batchPairs}
+          total={batchTotal}
+          currentStatus={currentBatchStatus}
           onSelect={(p) => {
             setPair(p);
             setSpec(p.spec ?? null);
@@ -407,10 +440,23 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
   );
 }
 
-function GtBatchPreview({ pairs, onSelect }: { pairs: GtPair[]; onSelect: (p: GtPair) => void }) {
+function GtBatchPreview({
+  pairs,
+  total,
+  currentStatus,
+  onSelect,
+}: {
+  pairs: GtPair[];
+  total: number;
+  currentStatus?: string;
+  onSelect: (p: GtPair) => void;
+}) {
+  const pendingCount = Math.max(0, total - pairs.length);
   return (
     <div className="mb-8 border-t border-border pt-6">
-      <p className="label-eyebrow mb-3">Worksheets in this set · {pairs.length}</p>
+      <p className="label-eyebrow mb-3">
+        Worksheets in this set · {pairs.length}/{total}
+      </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {pairs.map((p, i) => (
           <button
@@ -437,6 +483,15 @@ function GtBatchPreview({ pairs, onSelect }: { pairs: GtPair[]; onSelect: (p: Gt
               ) : null}
             </span>
           </button>
+        ))}
+        {Array.from({ length: pendingCount }, (_, j) => (
+          <div
+            key={`pending-${j}`}
+            data-testid={`gt-batch-pending-${pairs.length + j}`}
+            className="flex aspect-[3/2] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface text-center"
+          >
+            <span className="text-xs text-ink-faint">{j === 0 ? currentStatus || "Working…" : "Waiting…"}</span>
+          </div>
         ))}
       </div>
     </div>

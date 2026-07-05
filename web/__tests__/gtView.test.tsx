@@ -164,6 +164,57 @@ describe("GtView", () => {
       expect((screen.getByTestId("gt-back") as HTMLImageElement).src).toMatch(/gt-ocean-1-back\.png/);
     });
   });
+
+  it("shows a pending placeholder with a live status while a batch item is still generating", async () => {
+    const { http, HttpResponse } = await import("msw");
+    const { mswServer } = await import("./setup");
+    let releaseSecond: () => void = () => {};
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/batch", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "done",
+                  index: 0,
+                  pair: { id: "a-1", front_url: "/generated/gt-a-1-front.png", back_url: "/generated/gt-a-1-back.png" },
+                }) + "\n",
+              ),
+            );
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "generate", side: "front", attempt: 1, index: 1 }) + "\n"));
+            await secondGate;
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "done",
+                  index: 1,
+                  pair: { id: "a-2", front_url: "/generated/gt-a-2-front.png", back_url: "/generated/gt-a-2-back.png" },
+                }) + "\n",
+              ),
+            );
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "batch_done" }) + "\n"));
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    const batchInput = screen.getByLabelText(/batches/i);
+    await user.clear(batchInput);
+    await user.type(batchInput, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(screen.getByTestId("gt-batch-pending-1").textContent).toMatch(/drawing front/i));
+    releaseSecond();
+    await waitFor(() => expect(screen.getByTestId("gt-batch-1")).toBeInTheDocument());
+  });
 });
 
 describe("worksheet type switcher", () => {
