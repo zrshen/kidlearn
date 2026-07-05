@@ -176,14 +176,18 @@ class GtBatchRequest(BaseModel):
 
 
 @app.post("/api/gt/batch")
-def gt_batch(req: GtBatchRequest) -> dict:
-    try:
-        completed = gt_lib.batch_generate_gt(
-            n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels
-        )
-    except gt_lib.PartialBatchError as e:
-        raise HTTPException(status_code=502, detail={"error": e.reason, "completed": e.completed})
-    return {"batches": completed}
+def gt_batch(req: GtBatchRequest) -> StreamingResponse:
+    def target(emit: Callable[[dict], None]) -> None:
+        try:
+            gt_lib.batch_generate_gt(
+                n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels, on_event=emit,
+            )
+        except gt_lib.PartialBatchError as e:
+            emit({"type": "error", "message": e.reason})
+        else:
+            emit({"type": "batch_done"})
+
+    return StreamingResponse(_run_streaming(target), media_type="application/x-ndjson")
 
 
 @app.get("/api/gt/generated")

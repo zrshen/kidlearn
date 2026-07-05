@@ -244,22 +244,28 @@ def test_gt_generate_streams_error_event_on_image_failure(client):
     assert events == [{"type": "error", "message": "image generation failed: api down"}]
 
 
-def test_gt_batch_returns_batches(client):
-    batches = [{"id": "a-1", "theme": "a", "front_url": "/generated/gt-a-1-front.png", "back_url": "/generated/gt-a-1-back.png"}]
-    with patch("server.main.gt_lib.batch_generate_gt", return_value=batches):
-        r = client.post("/api/gt/batch", json={"n": 1, "topic": "a"})
+def test_gt_batch_streams_done_per_item_then_batch_done(client):
+    def fake_batch(n, topic, test=None, quality="medium", panels=None, on_event=None):
+        emit = on_event or (lambda e: None)
+        for i in range(n):
+            emit({"type": "done", "index": i, "pair": {"id": f"a-{i}", "front_url": "x", "back_url": "y"}})
+        return []
+
+    with patch("server.main.gt_lib.batch_generate_gt", side_effect=fake_batch):
+        r = client.post("/api/gt/batch", json={"n": 2, "topic": "a"})
     assert r.status_code == 200
-    assert r.json() == {"batches": batches}
+    events = _read_ndjson(r)
+    assert [e["type"] for e in events] == ["done", "done", "batch_done"]
+    assert events[0]["index"] == 0 and events[1]["index"] == 1
 
 
-def test_gt_batch_502_partial(client):
+def test_gt_batch_streams_error_event_on_partial_failure(client):
     err = gt_lib.PartialBatchError(completed=[{"id": "a-1"}], reason="Batch 2 of 2 failed: boom")
     with patch("server.main.gt_lib.batch_generate_gt", side_effect=err):
         r = client.post("/api/gt/batch", json={"n": 2})
-    assert r.status_code == 502
-    body = r.json()
-    assert body["error"].endswith("boom")
-    assert body["completed"] == [{"id": "a-1"}]
+    assert r.status_code == 200
+    events = _read_ndjson(r)
+    assert events == [{"type": "error", "message": "Batch 2 of 2 failed: boom"}]
 
 
 def test_gt_generated_lists_pairs(client):
