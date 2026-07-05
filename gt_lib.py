@@ -551,22 +551,31 @@ def batch_generate_gt(
     test: str | None = None,
     quality: Quality = "medium",
     panels: int | None = None,
+    on_event=None,
 ) -> list[dict]:
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
+    emit = on_event or (lambda e: None)
     completed: list[dict] = []
     for i in range(n):
+        def tagged(e: dict, i: int = i) -> None:
+            emit({**e, "index": i})
+
         try:
             spec = suggest_gt_spec(topic, test, panels)
-            pair = generate_gt_pair(spec, quality=quality)
+            tagged({"type": "step", "message": "Writing worksheet content…"})
+            tagged({"type": "content_ready", "theme": str(spec.get("theme", "")), "panels": len(spec["panels"])})
+            pair = generate_gt_pair(spec, quality=quality, on_event=tagged)
         except Exception as e:
             raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
-        completed.append({
+        entry = {
             **pair,
             "theme": str(spec.get("theme", "")),
             "test": str(spec.get("test", "")),
             "spec": spec,
-        })
+        }
+        tagged({"type": "done", "pair": entry})
+        completed.append(entry)
     return completed
 
 

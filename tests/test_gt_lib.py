@@ -390,6 +390,42 @@ def test_batch_generate_gt_rejects_nonpositive_n(gt_gen_dir):
         gt_lib.batch_generate_gt(n=0, topic=None)
 
 
+def test_batch_generate_gt_emits_step_content_ready_and_done_tagged_with_index(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    events = []
+    with patch.object(gt_lib, "suggest_gt_spec", side_effect=[_spec(), _spec()]):
+        gt_lib.batch_generate_gt(n=2, topic="fruits", quality="low", on_event=events.append)
+    assert all("index" in e for e in events)
+    indices = [e["index"] for e in events]
+    assert indices == sorted(indices)  # item 0's events all precede item 1's (sequential batch)
+    types_for_item_0 = [e["type"] for e in events if e["index"] == 0]
+    assert types_for_item_0[0] == "step"
+    assert "content_ready" in types_for_item_0
+    assert types_for_item_0[-1] == "done"
+    assert types_for_item_0.count("done") == 1
+
+
+def test_batch_generate_gt_content_ready_reports_theme_and_panel_count(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    events = []
+    with patch.object(gt_lib, "suggest_gt_spec", return_value=_spec()):
+        gt_lib.batch_generate_gt(n=1, topic="fruits", quality="low", on_event=events.append)
+    content_ready = next(e for e in events if e["type"] == "content_ready")
+    assert content_ready["theme"] == "fruits"
+    assert content_ready["panels"] == len(_spec()["panels"])
+
+
+def test_batch_generate_gt_partial_failure_only_tags_completed_item(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    events = []
+    effects = [_spec(), gt_lib.SuggestionError("bad spec")]
+    with patch.object(gt_lib, "suggest_gt_spec", side_effect=effects):
+        with pytest.raises(gt_lib.PartialBatchError):
+            gt_lib.batch_generate_gt(n=2, topic=None, on_event=events.append)
+    assert any(e["type"] == "done" and e["index"] == 0 for e in events)
+    assert not any(e["index"] == 1 for e in events)
+
+
 def test_list_gt_pairs_returns_newest_first(gt_gen_dir, monkeypatch):
     monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
     a = gt_lib.generate_gt_pair({**_spec(), "theme": "alpha"})
