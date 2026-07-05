@@ -31,6 +31,13 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+import json
+import queue
+import threading
+from collections.abc import Callable, Iterator
+
+from fastapi.responses import StreamingResponse
+
 Quality = Literal["low", "medium", "high"]
 
 
@@ -103,6 +110,28 @@ def batch(req: BatchRequest) -> dict:
     return {"batches": [_translate_entry(c) for c in completed]}
 
 
+def _run_streaming(target: Callable[[Callable[[dict], None]], None]) -> Iterator[str]:
+    """Run `target(emit)` on a background thread, yielding each event `target`
+    emits as an NDJSON line as soon as it's emitted. `target` must catch its
+    own domain errors and emit a final {"type": "error"|"done"|"batch_done"}
+    event itself — this helper only handles the thread/queue plumbing."""
+    q: queue.Queue = queue.Queue()
+    sentinel = object()
+
+    def worker() -> None:
+        try:
+            target(q.put)
+        finally:
+            q.put(sentinel)
+
+    threading.Thread(target=worker, daemon=True).start()
+    while True:
+        item = q.get()
+        if item is sentinel:
+            return
+        yield json.dumps(item) + "\n"
+
+
 class GtSuggestRequest(BaseModel):
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
@@ -124,13 +153,18 @@ class GtGenerateRequest(BaseModel):
 
 
 @app.post("/api/gt/generate")
-def gt_generate(req: GtGenerateRequest) -> dict:
-    try:
-        return gt_lib.generate_gt_pair(req.spec, quality=req.quality)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail={"error": f"invalid spec: {e}"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": f"image generation failed: {e}"})
+def gt_generate(req: GtGenerateRequest) -> StreamingResponse:
+    def target(emit: Callable[[dict], None]) -> None:
+        try:
+            pair = gt_lib.generate_gt_pair(req.spec, quality=req.quality, on_event=emit)
+        except ValueError as e:
+            emit({"type": "error", "message": f"invalid spec: {e}"})
+        except Exception as e:
+            emit({"type": "error", "message": f"image generation failed: {e}"})
+        else:
+            emit({"type": "done", "pair": pair})
+
+    return StreamingResponse(_run_streaming(target), media_type="application/x-ndjson")
 
 
 class GtBatchRequest(BaseModel):
