@@ -2,6 +2,17 @@ import { http, HttpResponse } from "msw";
 
 const API = "http://localhost:8000";
 
+export function ndjson(events: unknown[]) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const e of events) controller.enqueue(encoder.encode(JSON.stringify(e) + "\n"));
+      controller.close();
+    },
+  });
+  return new HttpResponse(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+}
+
 export const handlers = [
   http.get(`${API}/api/used-words`, () =>
     HttpResponse.json({ words: ["alpha", "beta", "gamma"], count: 3 })
@@ -13,20 +24,30 @@ export const handlers = [
     HttpResponse.json({ spec: { title: "Kindergarten GT Thinking Practice", theme: "fruits", panels: [] } })
   ),
   http.post(`${API}/api/gt/generate`, () =>
-    HttpResponse.json({ id: "fruits-1", front_url: "/generated/gt-fruits-1-front.png", back_url: "/generated/gt-fruits-1-back.png" })
+    ndjson([
+      {
+        type: "done",
+        pair: { id: "fruits-1", front_url: "/generated/gt-fruits-1-front.png", back_url: "/generated/gt-fruits-1-back.png" },
+      },
+    ])
   ),
   http.get(`${API}/api/gt/generated`, () => HttpResponse.json({ items: [] })),
   http.post(`${API}/api/gt/batch`, async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { n?: number };
     const n = body.n ?? 1;
-    const batches = Array.from({ length: n }, (_, i) => ({
-      id: `fruits-${i + 1}`,
-      theme: "fruits",
-      test: "",
-      front_url: `/generated/gt-fruits-${i + 1}-front.png`,
-      back_url: `/generated/gt-fruits-${i + 1}-back.png`,
+    const events: unknown[] = Array.from({ length: n }, (_, i) => ({
+      type: "done",
+      index: i,
+      pair: {
+        id: `fruits-${i + 1}`,
+        theme: "fruits",
+        test: "",
+        front_url: `/generated/gt-fruits-${i + 1}-front.png`,
+        back_url: `/generated/gt-fruits-${i + 1}-back.png`,
+      },
     }));
-    return HttpResponse.json({ batches });
+    events.push({ type: "batch_done" });
+    return ndjson(events);
   }),
   http.post(`${API}/api/gt/generated/delete`, async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { ids?: string[] };

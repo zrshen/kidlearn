@@ -1,6 +1,7 @@
 """GT (gifted-and-talented) thinking worksheet generator. No FastAPI/CLI imports."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import random
@@ -135,6 +136,10 @@ def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
 SUGGEST_MODEL = "gpt-5.5"
 SUGGEST_REASONING_EFFORT = "medium"
 SUGGEST_MAX_RETRIES = 3
+
+VERIFY_MODEL = SUGGEST_MODEL  # gpt-5.5 — confirmed vision-capable in Task 1; reused rather than qualifying a second model
+REVISE_MODEL = SUGGEST_MODEL  # gpt-5.5, text-only prompt revision
+MAX_ATTEMPTS = 3  # 1 initial render + 2 retries, per side
 
 # Untopic'd worksheets rotate through these so unspecified-topic batches differ.
 THEME_POOL = [
@@ -374,6 +379,151 @@ IMPORTANT:
 - BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
 
 
+def verify_image(image_bytes: bytes, panels: list[dict], attempt: int) -> dict:
+    """One vision call: does the rendered image match each panel's stated scene
+    (object counts, specifically)? Returns {"passed": bool, "mismatches": [...]}.
+    `attempt` is 1-based and only used to index GT_STUB_VERIFY fixtures."""
+    stub = os.environ.get("GT_STUB_VERIFY")
+    if stub:
+        results = json.loads(Path(stub).read_text())
+        if isinstance(results, list):
+            return results[min(attempt - 1, len(results) - 1)]
+        return results
+
+    scenes = "\n".join(
+        f"Panel {i}: {p.get('scene') or p['question']}"
+        for i, p in enumerate(panels, start=1)
+    )
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You check that a generated worksheet image matches its intended "
+                "content. Respond with JSON only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Here is what each numbered panel is supposed to show:\n\n"
+                        f"{scenes}\n\n"
+                        "Look at the attached image. For each panel, check ONLY whether the "
+                        "number of objects/items drawn matches what's described above — ignore "
+                        "art style, color accuracy, and anything else. Return JSON exactly: "
+                        '{"passed": true|false, "mismatches": '
+                        '[{"panel": <1-based int>, "note": "<what you saw vs. expected>"}]}. '
+                        "passed is true only if mismatches is empty."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                },
+            ],
+        },
+    ]
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(
+                model=VERIFY_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content
+            if not content:
+                last_reason = "empty response from model"
+                continue
+            result = json.loads(content)
+            if (
+                not isinstance(result, dict)
+                or not isinstance(result.get("passed"), bool)
+                or not isinstance(result.get("mismatches"), list)
+                or result["passed"] != (len(result["mismatches"]) == 0)
+            ):
+                last_reason = "invalid verification response: expected a boolean passed consistent with a mismatches list"
+                continue
+            return {"passed": result["passed"], "mismatches": result["mismatches"]}
+        except json.JSONDecodeError as e:
+            last_reason = f"could not parse model response: {e}"
+            continue
+        except OpenAIError as e:
+            last_reason = f"model request failed: {e}"
+            continue
+    raise RuntimeError(f"verify_image failed after {SUGGEST_MAX_RETRIES + 1} attempts: {last_reason}")
+
+
+def revise_prompt(prev_prompt: str, mismatches: list[dict]) -> str:
+    """One text-only call producing a corrected full-image prompt: same content,
+    but with the mismatched panel(s) made unmistakably explicit about the count."""
+    notes = "\n".join(f"- Panel {m.get('panel', '?')}: {m.get('note', 'mismatch')}" for m in mismatches)
+    messages = [
+        {
+            "role": "system",
+            "content": "You refine gpt-image-2 prompts for a Kindergarten worksheet generator.",
+        },
+        {
+            "role": "user",
+            "content": f"""The following image prompt was used to render a worksheet, but the
+generated image did not match the intended content for these panels:
+
+{notes}
+
+ORIGINAL PROMPT:
+{prev_prompt}
+
+Rewrite the ENTIRE prompt, keeping everything else the same, but make the corrected panel(s)
+unmistakably explicit about the exact count/detail that was wrong — repeat the correct count in
+plain words (e.g. "exactly three pumpkins — not four, not two") so the image model cannot get it
+wrong again. Return the full corrected prompt text only, no commentary.""",
+        },
+    ]
+    last_reason = "no attempts made"
+    for _ in range(SUGGEST_MAX_RETRIES + 1):
+        try:
+            resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages)
+            content = resp.choices[0].message.content
+            if not content or not content.strip():
+                last_reason = "empty response from model"
+                continue
+            return content
+        except OpenAIError as e:
+            last_reason = f"model request failed: {e}"
+            continue
+    raise RuntimeError(f"revise_prompt failed after {SUGGEST_MAX_RETRIES + 1} attempts: {last_reason}")
+
+
+class VerificationFailedError(Exception):
+    def __init__(self, mismatches: list[dict]) -> None:
+        super().__init__(f"image verification failed after {MAX_ATTEMPTS} attempts: {mismatches}")
+        self.mismatches = mismatches
+
+
+def _generate_verified_side(prompt: str, panels: list[dict], quality: Quality, side: str, on_event) -> bytes:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        on_event({"type": "generate", "side": side, "attempt": attempt})
+        image_bytes = produce_png_bytes(prompt, quality, "GT_STUB_IMAGE", _openai_client)
+        result = verify_image(image_bytes, panels, attempt)
+        on_event({
+            "type": "verify_result",
+            "side": side,
+            "attempt": attempt,
+            "passed": result["passed"],
+            "mismatches": result["mismatches"],
+        })
+        if result["passed"]:
+            return image_bytes
+        if attempt == MAX_ATTEMPTS:
+            raise VerificationFailedError(result["mismatches"])
+        on_event({"type": "retry", "side": side, "attempt": attempt + 1})
+        prompt = revise_prompt(prompt, result["mismatches"])
+    raise AssertionError("unreachable")  # loop always returns or raises
+
+
 def _slug(theme: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (theme or "gt").lower()).strip("-")
     return s or "gt"
@@ -383,7 +533,8 @@ def _new_id(theme: str) -> str:
     return f"{_slug(theme)}-{int(time.time() * 1000)}"
 
 
-def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
+def generate_gt_pair(spec: dict, quality: Quality = "medium", on_event=None) -> dict:
+    emit = on_event or (lambda e: None)
     validate_spec(spec)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     theme = str(spec.get("theme", ""))
@@ -392,11 +543,12 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium") -> dict:
     back_path = GENERATED_DIR / f"gt-{gid}-back.png"
     manifest_path = GENERATED_DIR / f"gt-{gid}.json"
 
-    front_bytes = produce_png_bytes(render_front_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
+    front_bytes = _generate_verified_side(render_front_prompt(spec), spec["panels"], quality, "front", emit)
     front_path.write_bytes(front_bytes)
     try:
-        back_bytes = produce_png_bytes(render_back_prompt(spec), quality, "GT_STUB_IMAGE", _openai_client)
-    except Exception:
+        back_bytes = _generate_verified_side(render_back_prompt(spec), spec["panels"], quality, "back", emit)
+    except BaseException:
+        # Cancellation also unwinds here; remove the partial pair before re-raising.
         front_path.unlink(missing_ok=True)
         raise
     back_path.write_bytes(back_bytes)
@@ -427,22 +579,31 @@ def batch_generate_gt(
     test: str | None = None,
     quality: Quality = "medium",
     panels: int | None = None,
+    on_event=None,
 ) -> list[dict]:
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
+    emit = on_event or (lambda e: None)
     completed: list[dict] = []
     for i in range(n):
+        def tagged(e: dict, i: int = i) -> None:
+            emit({**e, "index": i})
+
         try:
+            tagged({"type": "step", "message": "Writing worksheet content…"})
             spec = suggest_gt_spec(topic, test, panels)
-            pair = generate_gt_pair(spec, quality=quality)
+            tagged({"type": "content_ready", "theme": str(spec.get("theme", "")), "panels": len(spec["panels"])})
+            pair = generate_gt_pair(spec, quality=quality, on_event=tagged)
         except Exception as e:
             raise PartialBatchError(completed=completed, reason=f"Batch {i + 1} of {n} failed: {e}")
-        completed.append({
+        entry = {
             **pair,
             "theme": str(spec.get("theme", "")),
             "test": str(spec.get("test", "")),
             "spec": spec,
-        })
+        }
+        tagged({"type": "done", "pair": entry})
+        completed.append(entry)
     return completed
 
 

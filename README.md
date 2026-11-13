@@ -98,8 +98,8 @@ web/               Next.js 16 (App Router) + Tailwind v4 + TypeScript.
 | `POST` | `/api/generated/backfill` | Extract words from older PNGs via vision and write sidecars |
 | `POST` | `/api/generated/delete`   | Delete worksheets and release their words back to the library |
 | `POST` | `/api/gt/suggest`         | `{topic, test}` → a 6-panel GT spec with answers (502 on failure) |
-| `POST` | `/api/gt/generate`        | `{spec, quality}` → `{id, front_url, back_url}` (400 on invalid spec) |
-| `POST` | `/api/gt/batch`           | `{topic, test, n, quality}` → N front/back pairs (502 partial) |
+| `POST` | `/api/gt/generate`        | `{spec, quality}` → streamed NDJSON progress, ending in `{type: "done", pair: {id, front_url, back_url}}` or `{type: "error", message}` (always HTTP 200 once the stream starts) |
+| `POST` | `/api/gt/batch`           | `{topic, test, n, quality}` → streamed NDJSON: one `{type: "done", index, pair}` per completed item, then `{type: "batch_done"}`, or `{type: "error", message}` on partial failure (always HTTP 200 once the stream starts) |
 | `GET`  | `/api/gt/generated`       | GT archive listing (id, theme, test, front/back URLs) |
 | `POST` | `/api/gt/generated/delete`| `{ids}` → delete GT worksheet pairs by id |
 

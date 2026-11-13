@@ -17,6 +17,42 @@ describe("GtView", () => {
     expect((screen.getByTestId("gt-back") as HTMLImageElement).src).toMatch(/gt-fruits-1-back\.png/);
   });
 
+  it("shows a step-by-step progress log during Suggest & Generate", async () => {
+    const { http } = await import("msw");
+    const { mswServer } = await import("./setup");
+    const { ndjson } = await import("./handlers");
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/generate", () =>
+        ndjson([
+          { type: "generate", side: "front", attempt: 1 },
+          { type: "verify_result", side: "front", attempt: 1, passed: true, mismatches: [] },
+          { type: "generate", side: "back", attempt: 1 },
+          { type: "verify_result", side: "back", attempt: 1, passed: true, mismatches: [] },
+          {
+            type: "done",
+            pair: { id: "fruits-1", front_url: "/generated/gt-fruits-1-front.png", back_url: "/generated/gt-fruits-1-back.png" },
+          },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await screen.findByTestId("gt-front");
+    const log = screen.getByTestId("gt-progress-log");
+    expect(log.textContent).toMatch(/front page verified/i);
+    expect(log.textContent).toMatch(/back page verified/i);
+    expect(log.textContent).toMatch(/done/i);
+  });
+
+  it("keeps the progress log visible after generation completes", async () => {
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /suggest & generate/i }));
+    await screen.findByTestId("gt-front");
+    expect(screen.getByTestId("gt-progress-log")).toBeInTheDocument();
+  });
+
   it("shows an error banner when suggest fails", async () => {
     const { http, HttpResponse } = await import("msw");
     const { mswServer } = await import("./setup");
@@ -103,6 +139,33 @@ describe("GtView", () => {
     });
   });
 
+  it("still notifies onGenerated when a batch partially fails, so history refreshes", async () => {
+    const { http } = await import("msw");
+    const { mswServer } = await import("./setup");
+    const { ndjson } = await import("./handlers");
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/batch", () =>
+        ndjson([
+          {
+            type: "done",
+            index: 0,
+            pair: { id: "a-1", front_url: "/generated/gt-a-1-front.png", back_url: "/generated/gt-a-1-back.png" },
+          },
+          { type: "error", message: "Batch 2 of 2 failed: boom" },
+        ]),
+      ),
+    );
+    const onGenerated = vi.fn();
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" onGenerated={onGenerated} />);
+    const batchInput = screen.getByLabelText(/batches/i);
+    await user.clear(batchInput);
+    await user.type(batchInput, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(onGenerated).toHaveBeenCalledTimes(1));
+  });
+
   it("prints questions only when Print questions is clicked", async () => {
     const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
     const user = userEvent.setup();
@@ -127,6 +190,124 @@ describe("GtView", () => {
       expect((screen.getByTestId("gt-front") as HTMLImageElement).src).toMatch(/gt-ocean-1-front\.png/);
       expect((screen.getByTestId("gt-back") as HTMLImageElement).src).toMatch(/gt-ocean-1-back\.png/);
     });
+  });
+
+  it("shows a pending placeholder with a live status while a batch item is still generating", async () => {
+    const { http, HttpResponse } = await import("msw");
+    const { mswServer } = await import("./setup");
+    let releaseSecond: () => void = () => {};
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    mswServer.use(
+      http.post("http://localhost:8000/api/gt/batch", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "done",
+                  index: 0,
+                  pair: { id: "a-1", front_url: "/generated/gt-a-1-front.png", back_url: "/generated/gt-a-1-back.png" },
+                }) + "\n",
+              ),
+            );
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "generate", side: "front", attempt: 1, index: 1 }) + "\n"));
+            await secondGate;
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "done",
+                  index: 1,
+                  pair: { id: "a-2", front_url: "/generated/gt-a-2-front.png", back_url: "/generated/gt-a-2-back.png" },
+                }) + "\n",
+              ),
+            );
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "batch_done" }) + "\n"));
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<GtView topic="fruits" quality="low" />);
+    const batchInput = screen.getByLabelText(/batches/i);
+    await user.clear(batchInput);
+    await user.type(batchInput, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(screen.getByTestId("gt-batch-pending-1").textContent).toMatch(/drawing front/i));
+    releaseSecond();
+    await waitFor(() => expect(screen.getByTestId("gt-batch-1")).toBeInTheDocument());
+  });
+});
+
+describe("GT interrupted batch", () => {
+  it("re-enables generation and refreshes history after a stream disconnects", async () => {
+    let sent = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (sent) { controller.error(new TypeError("connection lost")); return; }
+          sent = true;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            type: "done", index: 0,
+            pair: { id: "a-1", front_url: "/generated/front.png", back_url: "/generated/back.png" },
+          }) + "\n"));
+        },
+      }),
+    ));
+    try {
+      const onGenerated = vi.fn();
+      const user = userEvent.setup();
+      render(<GtView topic="fruits" quality="low" onGenerated={onGenerated} />);
+      const input = screen.getByLabelText(/batches/i);
+      await user.clear(input);
+      await user.type(input, "2");
+      await user.click(screen.getByRole("button", { name: /batch generate/i }));
+      await screen.findByText(/connection interrupted/i);
+      expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled();
+      expect(screen.getByTestId("gt-batch-0")).toBeInTheDocument();
+      expect(screen.queryByTestId("gt-batch-pending-1")).not.toBeInTheDocument();
+      expect(onGenerated).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe("GT batch removal", () => {
+  it("removes the batch preview when selecting history after a batch", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled());
+    rerender(<GtView topic="fruits" quality="low" selectedPair={{
+      id: "history-1", theme: "ocean", test: "", frontUrl: "/front.png", backUrl: "/back.png",
+    }} />);
+    await screen.findByTestId("gt-front");
+    expect(screen.queryByText(/worksheets in this set/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("gt-batch-pending-0")).not.toBeInTheDocument();
+  });
+
+  it("shrinks the completed batch when deleting worksheets without adding placeholders", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<GtView topic="fruits" quality="low" />);
+    const input = screen.getByLabelText(/batches/i);
+    await user.clear(input);
+    await user.type(input, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-1");
+    await waitFor(() => expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled());
+    rerender(<GtView topic="fruits" quality="low" deletedId="fruits-1" />);
+    await waitFor(() => expect(screen.queryByTestId("gt-batch-1")).not.toBeInTheDocument());
+    expect(screen.getByText(/worksheets in this set/i)).toHaveTextContent("1/1");
+    expect(screen.queryByTestId("gt-batch-pending-1")).not.toBeInTheDocument();
+    rerender(<GtView topic="fruits" quality="low" deletedId="fruits-2" />);
+    await waitFor(() => expect(screen.queryByText(/worksheets in this set/i)).not.toBeInTheDocument());
   });
 });
 

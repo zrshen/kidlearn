@@ -16,7 +16,7 @@ export function TopicInput({
         onChange={(e) => onChange(e.target.value)}
         placeholder="animals, food, feelings…"
         maxLength={100}
-        className="mt-1.5 w-full border-0 bg-transparent p-0 text-base font-medium text-ink outline-none placeholder:font-normal placeholder:text-ink-faint"
+        className="mt-1.5 h-10 w-full border-0 bg-transparent p-0 text-base font-medium text-ink outline-none placeholder:font-normal placeholder:text-ink-faint"
       />
     </label>
   );

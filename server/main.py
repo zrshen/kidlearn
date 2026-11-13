@@ -31,6 +31,13 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+import json
+import queue
+import threading
+from collections.abc import Callable, Iterator
+
+from fastapi.responses import StreamingResponse
+
 Quality = Literal["low", "medium", "high"]
 
 
@@ -103,6 +110,52 @@ def batch(req: BatchRequest) -> dict:
     return {"batches": [_translate_entry(c) for c in completed]}
 
 
+class _ClientDisconnected(BaseException):
+    """Signals the worker thread to stop once the client has gone away.
+
+    Extends BaseException (not Exception) so it passes through target's own
+    `except Exception`/`except PartialBatchError` blocks unhandled, reaching
+    only worker()'s own handler below."""
+
+
+def _run_streaming(target: Callable[[Callable[[dict], None]], None]) -> Iterator[str]:
+    """Run `target(emit)` on a background thread, yielding each event `target`
+    emits as an NDJSON line as soon as it's emitted. `target` must catch its
+    own domain errors and emit a final {"type": "error"|"done"|"batch_done"}
+    event itself — this helper only handles the thread/queue plumbing.
+
+    If the client disconnects (the generator is closed early), further calls
+    to `emit` raise _ClientDisconnected so the worker thread stops making
+    OpenAI calls at its next progress checkpoint instead of running to
+    completion unobserved."""
+    q: queue.Queue = queue.Queue()
+    sentinel = object()
+    client_gone = threading.Event()
+
+    def emit(item: dict) -> None:
+        if client_gone.is_set():
+            raise _ClientDisconnected()
+        q.put(item)
+
+    def worker() -> None:
+        try:
+            target(emit)
+        except _ClientDisconnected:
+            pass
+        finally:
+            q.put(sentinel)
+
+    threading.Thread(target=worker, daemon=True).start()
+    try:
+        while True:
+            item = q.get()
+            if item is sentinel:
+                return
+            yield json.dumps(item) + "\n"
+    finally:
+        client_gone.set()
+
+
 class GtSuggestRequest(BaseModel):
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
@@ -124,13 +177,18 @@ class GtGenerateRequest(BaseModel):
 
 
 @app.post("/api/gt/generate")
-def gt_generate(req: GtGenerateRequest) -> dict:
-    try:
-        return gt_lib.generate_gt_pair(req.spec, quality=req.quality)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail={"error": f"invalid spec: {e}"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": f"image generation failed: {e}"})
+def gt_generate(req: GtGenerateRequest) -> StreamingResponse:
+    def target(emit: Callable[[dict], None]) -> None:
+        try:
+            pair = gt_lib.generate_gt_pair(req.spec, quality=req.quality, on_event=emit)
+        except ValueError as e:
+            emit({"type": "error", "message": f"invalid spec: {e}"})
+        except Exception as e:
+            emit({"type": "error", "message": f"image generation failed: {e}"})
+        else:
+            emit({"type": "done", "pair": pair})
+
+    return StreamingResponse(_run_streaming(target), media_type="application/x-ndjson")
 
 
 class GtBatchRequest(BaseModel):
@@ -142,14 +200,20 @@ class GtBatchRequest(BaseModel):
 
 
 @app.post("/api/gt/batch")
-def gt_batch(req: GtBatchRequest) -> dict:
-    try:
-        completed = gt_lib.batch_generate_gt(
-            n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels
-        )
-    except gt_lib.PartialBatchError as e:
-        raise HTTPException(status_code=502, detail={"error": e.reason, "completed": e.completed})
-    return {"batches": completed}
+def gt_batch(req: GtBatchRequest) -> StreamingResponse:
+    def target(emit: Callable[[dict], None]) -> None:
+        try:
+            gt_lib.batch_generate_gt(
+                n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels, on_event=emit,
+            )
+        except gt_lib.PartialBatchError as e:
+            emit({"type": "error", "message": e.reason})
+        except Exception as e:
+            emit({"type": "error", "message": f"batch generation failed: {e}"})
+        else:
+            emit({"type": "batch_done"})
+
+    return StreamingResponse(_run_streaming(target), media_type="application/x-ndjson")
 
 
 @app.get("/api/gt/generated")

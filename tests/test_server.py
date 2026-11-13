@@ -189,6 +189,11 @@ import gt_lib
 GT_SPEC = json.loads(Path("tests/fixtures/gt_spec_stub.json").read_text())
 
 
+def _read_ndjson(response) -> list[dict]:
+    lines = [ln for ln in response.text.strip().split("\n") if ln]
+    return [json.loads(ln) for ln in lines]
+
+
 def test_gt_suggest_returns_spec(client):
     with patch("server.main.gt_lib.suggest_gt_spec", return_value=GT_SPEC):
         r = client.post("/api/gt/suggest", json={"topic": "fruits"})
@@ -203,44 +208,64 @@ def test_gt_suggest_502_on_suggestion_error(client):
     assert "nope" in r.json()["error"]
 
 
-def test_gt_generate_returns_pair(client):
+def test_gt_generate_streams_progress_then_done(client):
     pair = {"id": "fruits-1", "front_url": "/generated/gt-fruits-1-front.png", "back_url": "/generated/gt-fruits-1-back.png"}
-    with patch("server.main.gt_lib.generate_gt_pair", return_value=pair):
+
+    def fake_generate(spec, quality="medium", on_event=None):
+        emit = on_event or (lambda e: None)
+        emit({"type": "generate", "side": "front", "attempt": 1})
+        emit({"type": "verify_result", "side": "front", "attempt": 1, "passed": True, "mismatches": []})
+        emit({"type": "generate", "side": "back", "attempt": 1})
+        emit({"type": "verify_result", "side": "back", "attempt": 1, "passed": True, "mismatches": []})
+        return pair
+
+    with patch("server.main.gt_lib.generate_gt_pair", side_effect=fake_generate):
         r = client.post("/api/gt/generate", json={"spec": GT_SPEC, "quality": "low"})
     assert r.status_code == 200
-    assert r.json() == pair
+    assert r.headers["content-type"].startswith("application/x-ndjson")
+    events = _read_ndjson(r)
+    assert events[0] == {"type": "generate", "side": "front", "attempt": 1}
+    assert events[-1] == {"type": "done", "pair": pair}
 
 
-def test_gt_generate_400_on_invalid_spec(client):
+def test_gt_generate_streams_error_event_on_invalid_spec(client):
     with patch("server.main.gt_lib.generate_gt_pair", side_effect=ValueError("expected 6 panels, got 1")):
         r = client.post("/api/gt/generate", json={"spec": {"panels": []}})
-    assert r.status_code == 400
-    assert "invalid spec" in r.json()["error"]
+    assert r.status_code == 200
+    events = _read_ndjson(r)
+    assert events == [{"type": "error", "message": "invalid spec: expected 6 panels, got 1"}]
 
 
-def test_gt_generate_500_on_image_failure(client):
+def test_gt_generate_streams_error_event_on_image_failure(client):
     with patch("server.main.gt_lib.generate_gt_pair", side_effect=RuntimeError("api down")):
         r = client.post("/api/gt/generate", json={"spec": GT_SPEC})
-    assert r.status_code == 500
-    assert "image generation failed" in r.json()["error"]
-
-
-def test_gt_batch_returns_batches(client):
-    batches = [{"id": "a-1", "theme": "a", "front_url": "/generated/gt-a-1-front.png", "back_url": "/generated/gt-a-1-back.png"}]
-    with patch("server.main.gt_lib.batch_generate_gt", return_value=batches):
-        r = client.post("/api/gt/batch", json={"n": 1, "topic": "a"})
     assert r.status_code == 200
-    assert r.json() == {"batches": batches}
+    events = _read_ndjson(r)
+    assert events == [{"type": "error", "message": "image generation failed: api down"}]
 
 
-def test_gt_batch_502_partial(client):
+def test_gt_batch_streams_done_per_item_then_batch_done(client):
+    def fake_batch(n, topic, test=None, quality="medium", panels=None, on_event=None):
+        emit = on_event or (lambda e: None)
+        for i in range(n):
+            emit({"type": "done", "index": i, "pair": {"id": f"a-{i}", "front_url": "x", "back_url": "y"}})
+        return []
+
+    with patch("server.main.gt_lib.batch_generate_gt", side_effect=fake_batch):
+        r = client.post("/api/gt/batch", json={"n": 2, "topic": "a"})
+    assert r.status_code == 200
+    events = _read_ndjson(r)
+    assert [e["type"] for e in events] == ["done", "done", "batch_done"]
+    assert events[0]["index"] == 0 and events[1]["index"] == 1
+
+
+def test_gt_batch_streams_error_event_on_partial_failure(client):
     err = gt_lib.PartialBatchError(completed=[{"id": "a-1"}], reason="Batch 2 of 2 failed: boom")
     with patch("server.main.gt_lib.batch_generate_gt", side_effect=err):
         r = client.post("/api/gt/batch", json={"n": 2})
-    assert r.status_code == 502
-    body = r.json()
-    assert body["error"].endswith("boom")
-    assert body["completed"] == [{"id": "a-1"}]
+    assert r.status_code == 200
+    events = _read_ndjson(r)
+    assert events == [{"type": "error", "message": "Batch 2 of 2 failed: boom"}]
 
 
 def test_gt_generated_lists_pairs(client):

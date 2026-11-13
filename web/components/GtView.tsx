@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
-import { batchGt, generateGt, suggestGt, type GtPair, type GtSpec, type Quality } from "../app/api";
+import { batchGt, generateGt, suggestGt, type GtPair, type GtProgressEvent, type GtSpec, type Quality } from "../app/api";
 import { clampInt } from "../app/clamp";
 
 type Banner = { kind: "none" } | { kind: "error"; message: string };
@@ -22,6 +22,58 @@ const BATCH_CONFIRM_THRESHOLD = 3;
 const PANELS_MIN = 4;
 const PANELS_MAX = 6;
 const PANELS_DEFAULT = 4;
+
+type LogEntry = { text: string; kind: "info" | "success" | "error" };
+
+function eventToLogLine(e: GtProgressEvent): LogEntry | null {
+  switch (e.type) {
+    case "generate":
+      return {
+        text: `⏳ ${e.side === "front" ? "Drawing front page" : "Drawing back page"} (attempt ${e.attempt})…`,
+        kind: "info",
+      };
+    case "verify_result":
+      if (e.passed) {
+        return { text: `✓  ${e.side === "front" ? "Front" : "Back"} page verified`, kind: "success" };
+      } else {
+        const m = e.mismatches[0];
+        const note = m ? `panel ${m.panel}: ${m.note}` : "mismatch found";
+        return { text: `✗  ${e.side === "front" ? "Front" : "Back"} page check failed — ${note}`, kind: "error" };
+      }
+    case "retry":
+      return {
+        text: `⏳ ${e.side === "front" ? "Redrawing front page" : "Redrawing back page"} (attempt ${e.attempt})…`,
+        kind: "info",
+      };
+    case "done":
+      return { text: "✓  Done", kind: "success" };
+    case "error":
+      return { text: `✗  ${e.message}`, kind: "error" };
+    default:
+      return null;
+  }
+}
+
+function batchBadgeText(e: GtProgressEvent): string | null {
+  switch (e.type) {
+    case "step":
+      return "Writing worksheet content…";
+    case "content_ready":
+      return `Content ready — ${e.theme}`;
+    case "generate":
+      return `Drawing ${e.side} (attempt ${e.attempt})…`;
+    case "verify_result":
+      return e.passed
+        ? `${e.side === "front" ? "Front" : "Back"} verified`
+        : `${e.side === "front" ? "Front" : "Back"} check failed`;
+    case "retry":
+      return `Retrying ${e.side} (attempt ${e.attempt})…`;
+    case "error":
+      return "Failed";
+    default:
+      return null;
+  }
+}
 
 export function GtView({
   topic,
@@ -48,6 +100,10 @@ export function GtView({
   const [pendingBatchConfirm, setPendingBatchConfirm] = useState(false);
   const [printScope, setPrintScope] = useState<PrintScope>("both");
   const [printNonce, setPrintNonce] = useState(0);
+  const [progressLog, setProgressLog] = useState<LogEntry[]>([]);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [currentBatchStatus, setCurrentBatchStatus] = useState("");
+  const visibleBatchTotal = busy ? batchTotal : batchPairs.length;
   const effectiveTest = customTest.trim() || builtinTest;
   const usingCustom = customTest.trim().length > 0;
   const abortRef = useRef<AbortController | null>(null);
@@ -82,6 +138,8 @@ export function GtView({
       setPair(selectedPair);
       setSpec(selectedPair.spec ?? null);
       setBatchPairs([]);
+      setBatchTotal(0);
+      setCurrentBatchStatus("");
       setBanner({ kind: "none" });
       setBusy(false);
     }
@@ -112,6 +170,8 @@ export function GtView({
     setPair(null);
     setSpec(null);
     setBatchPairs([]);
+    setBatchTotal(0);
+    setProgressLog([]);
     setBusy(true);
     const signal = startWork();
     const sug = await suggestGt(topic.trim() || null, effectiveTest, clampedPanels(), signal);
@@ -123,7 +183,10 @@ export function GtView({
       return;
     }
     setSpec(sug.spec);
-    const gen = await generateGt(sug.spec, quality, signal);
+    const gen = await generateGt(sug.spec, quality, signal, (e) => {
+      const line = eventToLogLine(e);
+      if (line) setProgressLog((prev) => [...prev, line]);
+    });
     if (signal.aborted) return;
     setBusy(false);
     if (gen.ok) {
@@ -138,23 +201,34 @@ export function GtView({
     setBanner({ kind: "none" });
     setPair(null);
     setSpec(null);
+    const total = clampedBatchN();
     setBatchPairs([]);
+    setBatchTotal(total);
+    setCurrentBatchStatus("");
+    setProgressLog([]);
     setBusy(true);
     setPendingBatchConfirm(false);
     const signal = startWork();
-    const res = await batchGt(topic.trim() || null, effectiveTest, clampedBatchN(), clampedPanels(), quality, signal);
+    const res = await batchGt(topic.trim() || null, effectiveTest, total, clampedPanels(), quality, signal, (e) => {
+      if (e.type === "done") {
+        setBatchPairs((prev) => [...prev, e.pair]);
+        setCurrentBatchStatus("");
+        return;
+      }
+      const text = batchBadgeText(e);
+      if (text) setCurrentBatchStatus(text);
+    });
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     setBusy(false);
     if (res.ok) {
-      setBatchPairs(res.batches);
       onGenerated?.();
     } else if (!("cancelled" in res)) {
+      if (res.completed.length > 0) onGenerated?.();
+      // Stop rendering placeholders for items that will never complete.
+      setBatchTotal(res.completed.length);
+      setCurrentBatchStatus("");
       setBanner({ kind: "error", message: res.message });
-      if (res.completed.length > 0) {
-        setBatchPairs(res.completed);
-        onGenerated?.();
-      }
     }
   }
 
@@ -165,38 +239,40 @@ export function GtView({
 
   return (
     <section>
-      <fieldset className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm">
-        <legend className="label-eyebrow float-none px-0">Test focus</legend>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          {TEST_BUILTINS.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => {
-                setBuiltinTest(b.id);
-                setCustomTest("");
-              }}
-              aria-pressed={!usingCustom && builtinTest === b.id}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
-                !usingCustom && builtinTest === b.id
-                  ? "bg-primary text-on-primary"
-                  : "border border-border text-ink-soft hover:bg-border hover:text-ink"
-              }`}
-            >
-              {b.label}
-            </button>
-          ))}
-          <input
-            type="text"
-            value={customTest}
-            onChange={(e) => setCustomTest(e.target.value)}
-            placeholder="Other test…"
-            aria-label="Other test"
-            maxLength={60}
-            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
-          />
-        </div>
-      </fieldset>
+      <div className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm">
+        <fieldset className="min-w-0">
+          <legend className="label-eyebrow px-0">Test focus</legend>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {TEST_BUILTINS.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => {
+                  setBuiltinTest(b.id);
+                  setCustomTest("");
+                }}
+                aria-pressed={!usingCustom && builtinTest === b.id}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+                  !usingCustom && builtinTest === b.id
+                    ? "bg-primary text-on-primary"
+                    : "border border-border text-ink-soft hover:bg-border hover:text-ink"
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+            <input
+              type="text"
+              value={customTest}
+              onChange={(e) => setCustomTest(e.target.value)}
+              placeholder="Other test…"
+              aria-label="Other test"
+              maxLength={60}
+              className="min-w-[10rem] flex-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
+            />
+          </div>
+        </fieldset>
+      </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
         <button
@@ -294,6 +370,8 @@ export function GtView({
         </div>
       )}
 
+      <ProgressLog entries={progressLog} />
+
       {spec && <SpecPeek spec={spec} />}
 
       {pair && (
@@ -303,9 +381,11 @@ export function GtView({
         </div>
       )}
 
-      {batchPairs.length > 0 && (
+      {visibleBatchTotal > 0 && (
         <GtBatchPreview
           pairs={batchPairs}
+          total={visibleBatchTotal}
+          currentStatus={currentBatchStatus}
           onSelect={(p) => {
             setPair(p);
             setSpec(p.spec ?? null);
@@ -335,6 +415,22 @@ function SpecPeek({ spec }: { spec: GtSpec }) {
   );
 }
 
+function ProgressLog({ entries }: { entries: LogEntry[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <div
+      className="mb-6 rounded-xl border border-border bg-surface px-4 py-3 font-mono text-[0.78rem] leading-relaxed"
+      data-testid="gt-progress-log"
+    >
+      {entries.map((e, i) => (
+        <div key={i} className={e.kind === "error" ? "text-danger" : e.kind === "success" ? "text-success-ink" : "text-ink-soft"}>
+          {e.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" | "back"; src: string; testid: string }) {
   return (
     <figure className="overflow-hidden rounded-xl border border-border bg-surface shadow-card-md">
@@ -353,10 +449,23 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
   );
 }
 
-function GtBatchPreview({ pairs, onSelect }: { pairs: GtPair[]; onSelect: (p: GtPair) => void }) {
+function GtBatchPreview({
+  pairs,
+  total,
+  currentStatus,
+  onSelect,
+}: {
+  pairs: GtPair[];
+  total: number;
+  currentStatus?: string;
+  onSelect: (p: GtPair) => void;
+}) {
+  const pendingCount = Math.max(0, total - pairs.length);
   return (
     <div className="mb-8 border-t border-border pt-6">
-      <p className="label-eyebrow mb-3">Worksheets in this set · {pairs.length}</p>
+      <p className="label-eyebrow mb-3">
+        Worksheets in this set · {pairs.length}/{total}
+      </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {pairs.map((p, i) => (
           <button
@@ -383,6 +492,15 @@ function GtBatchPreview({ pairs, onSelect }: { pairs: GtPair[]; onSelect: (p: Gt
               ) : null}
             </span>
           </button>
+        ))}
+        {Array.from({ length: pendingCount }, (_, j) => (
+          <div
+            key={`pending-${j}`}
+            data-testid={`gt-batch-pending-${pairs.length + j}`}
+            className="flex aspect-[3/2] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface text-center"
+          >
+            <span className="text-xs text-ink-faint">{j === 0 ? currentStatus || "Working…" : "Waiting…"}</span>
+          </div>
         ))}
       </div>
     </div>
