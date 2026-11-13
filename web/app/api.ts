@@ -365,12 +365,16 @@ export async function batchGt(
   }
   const completed: GtPair[] = [];
   let errorMessage: string | null = null;
+  let batchDone = false;
   try {
     await readNdjson(r.body, (raw) => {
       if (raw.type === "done") {
         const pair = toGtPair(raw.pair);
         completed.push(pair);
         onEvent?.({ type: "done", pair, index: raw.index });
+      } else if (raw.type === "batch_done") {
+        batchDone = true;
+        onEvent?.(raw);
       } else if (raw.type === "error") {
         errorMessage = raw.message;
         onEvent?.(raw);
@@ -383,6 +387,7 @@ export async function batchGt(
     return { ok: false, message: "Connection interrupted while reading the batch stream. Please try again.", completed };
   }
   if (errorMessage) return { ok: false, message: errorMessage, completed };
+  if (!batchDone) return { ok: false, message: "Batch stream ended before completion. Please try again.", completed };
   return { ok: true, batches: completed };
 }
 

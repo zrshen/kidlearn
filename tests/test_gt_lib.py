@@ -423,7 +423,7 @@ def test_batch_generate_gt_partial_failure_only_tags_completed_item(gt_gen_dir, 
         with pytest.raises(gt_lib.PartialBatchError):
             gt_lib.batch_generate_gt(n=2, topic=None, on_event=events.append)
     assert any(e["type"] == "done" and e["index"] == 0 for e in events)
-    assert not any(e["index"] == 1 for e in events)
+    assert [e["type"] for e in events if e["index"] == 1] == ["step"]
 
 
 def test_list_gt_pairs_returns_newest_first(gt_gen_dir, monkeypatch):
@@ -699,3 +699,47 @@ def test_generate_gt_pair_cleans_up_front_on_client_disconnect(gt_gen_dir, monke
     with pytest.raises(_ClientDisconnected):
         gt_lib.generate_gt_pair(_spec(), on_event=disconnect_on_back)
     assert list(gt_gen_dir.glob("gt-*")) == []
+
+
+@pytest.mark.parametrize("reply", [
+    {"passed": "false", "mismatches": []},
+    {"passed": True, "mismatches": [{"panel": 1, "note": "wrong count"}]},
+    {"passed": True},
+    {"passed": True, "mismatches": None},
+    {"passed": True, "mismatches": {}},
+    {"passed": False, "mismatches": []},
+    {"mismatches": []},
+    [],
+])
+def test_verify_image_retries_malformed_or_inconsistent_reply(monkeypatch, reply):
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps(reply)))]),
+        MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps(_fail_result())))]),
+    ]
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        assert gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1) == _fail_result()
+
+
+def test_verify_image_rejects_persistently_malformed_replies(monkeypatch):
+    monkeypatch.delenv("GT_STUB_VERIFY", raising=False)
+    client = MagicMock()
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content='{"passed": "false", "mismatches": []}'))]
+    )
+    with patch.object(gt_lib, "_openai_client", lambda: client):
+        with pytest.raises(RuntimeError, match="invalid verification response"):
+            gt_lib.verify_image(PNG_BYTES, [_panel()], attempt=1)
+
+
+def test_batch_reports_writing_before_suggesting_content(gt_gen_dir, monkeypatch):
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+    events = []
+
+    def suggest(*args):
+        assert events == [{"type": "step", "message": "Writing worksheet content…", "index": 0}]
+        return _spec()
+
+    with patch.object(gt_lib, "suggest_gt_spec", side_effect=suggest):
+        gt_lib.batch_generate_gt(n=1, topic=None, on_event=events.append)

@@ -139,3 +139,19 @@ describe("GT interrupted streams", () => {
     }
   });
 });
+
+
+describe("GT batch completion", () => {
+  it.each([0, 1, 2])("rejects a clean EOF without batch_done after %i completed pairs", async (count) => {
+    mswServer.use(http.post(`${API}/api/gt/batch`, () => ndjson(
+      Array.from({ length: count }, (_, index) => ({
+        type: "done", index, pair: { id: `a-${index}`, front_url: "/g/a", back_url: "/g/b" },
+      })),
+    )));
+    const result = await batchGt(null, null, 2);
+    expect(result).toEqual({
+      ok: false, message: expect.stringMatching(/stream|incomplete/i),
+      completed: Array.from({ length: count }, (_, index) => expect.objectContaining({ id: `a-${index}` })),
+    });
+  });
+});

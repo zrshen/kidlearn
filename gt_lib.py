@@ -439,7 +439,15 @@ def verify_image(image_bytes: bytes, panels: list[dict], attempt: int) -> dict:
                 last_reason = "empty response from model"
                 continue
             result = json.loads(content)
-            return {"passed": bool(result.get("passed")), "mismatches": result.get("mismatches") or []}
+            if (
+                not isinstance(result, dict)
+                or not isinstance(result.get("passed"), bool)
+                or not isinstance(result.get("mismatches"), list)
+                or result["passed"] != (len(result["mismatches"]) == 0)
+            ):
+                last_reason = "invalid verification response: expected a boolean passed consistent with a mismatches list"
+                continue
+            return {"passed": result["passed"], "mismatches": result["mismatches"]}
         except json.JSONDecodeError as e:
             last_reason = f"could not parse model response: {e}"
             continue
@@ -582,8 +590,8 @@ def batch_generate_gt(
             emit({**e, "index": i})
 
         try:
-            spec = suggest_gt_spec(topic, test, panels)
             tagged({"type": "step", "message": "Writing worksheet content…"})
+            spec = suggest_gt_spec(topic, test, panels)
             tagged({"type": "content_ready", "theme": str(spec.get("theme", "")), "panels": len(spec["panels"])})
             pair = generate_gt_pair(spec, quality=quality, on_event=tagged)
         except Exception as e:
