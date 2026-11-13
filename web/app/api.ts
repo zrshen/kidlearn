@@ -326,7 +326,7 @@ export async function generateGt(
     });
   } catch (e) {
     if (isAbort(e)) return { ok: false, kind: "cancelled" };
-    throw e;
+    return { ok: false, kind: "error", message: "Connection interrupted while reading the generation stream. Please try again." };
   }
   if (errorMessage) return { ok: false, kind: "error", message: errorMessage };
   if (!pair) return { ok: false, kind: "error", message: "stream ended without a result" };
@@ -380,7 +380,7 @@ export async function batchGt(
     });
   } catch (e) {
     if (isAbort(e)) return { ok: false, cancelled: true };
-    throw e;
+    return { ok: false, message: "Connection interrupted while reading the batch stream. Please try again.", completed };
   }
   if (errorMessage) return { ok: false, message: errorMessage, completed };
   return { ok: true, batches: completed };

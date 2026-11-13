@@ -244,6 +244,73 @@ describe("GtView", () => {
   });
 });
 
+describe("GT interrupted batch", () => {
+  it("re-enables generation and refreshes history after a stream disconnects", async () => {
+    let sent = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (sent) { controller.error(new TypeError("connection lost")); return; }
+          sent = true;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            type: "done", index: 0,
+            pair: { id: "a-1", front_url: "/generated/front.png", back_url: "/generated/back.png" },
+          }) + "\n"));
+        },
+      }),
+    ));
+    try {
+      const onGenerated = vi.fn();
+      const user = userEvent.setup();
+      render(<GtView topic="fruits" quality="low" onGenerated={onGenerated} />);
+      const input = screen.getByLabelText(/batches/i);
+      await user.clear(input);
+      await user.type(input, "2");
+      await user.click(screen.getByRole("button", { name: /batch generate/i }));
+      await screen.findByText(/connection interrupted/i);
+      expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled();
+      expect(screen.getByTestId("gt-batch-0")).toBeInTheDocument();
+      expect(screen.queryByTestId("gt-batch-pending-1")).not.toBeInTheDocument();
+      expect(onGenerated).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe("GT batch removal", () => {
+  it("removes the batch preview when selecting history after a batch", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<GtView topic="fruits" quality="low" />);
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-0");
+    await waitFor(() => expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled());
+    rerender(<GtView topic="fruits" quality="low" selectedPair={{
+      id: "history-1", theme: "ocean", test: "", frontUrl: "/front.png", backUrl: "/back.png",
+    }} />);
+    await screen.findByTestId("gt-front");
+    expect(screen.queryByText(/worksheets in this set/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("gt-batch-pending-0")).not.toBeInTheDocument();
+  });
+
+  it("shrinks the completed batch when deleting worksheets without adding placeholders", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<GtView topic="fruits" quality="low" />);
+    const input = screen.getByLabelText(/batches/i);
+    await user.clear(input);
+    await user.type(input, "2");
+    await user.click(screen.getByRole("button", { name: /batch generate/i }));
+    await screen.findByTestId("gt-batch-1");
+    await waitFor(() => expect(screen.getByRole("button", { name: /suggest & generate/i })).toBeEnabled());
+    rerender(<GtView topic="fruits" quality="low" deletedId="fruits-1" />);
+    await waitFor(() => expect(screen.queryByTestId("gt-batch-1")).not.toBeInTheDocument());
+    expect(screen.getByText(/worksheets in this set/i)).toHaveTextContent("1/1");
+    expect(screen.queryByTestId("gt-batch-pending-1")).not.toBeInTheDocument();
+    rerender(<GtView topic="fruits" quality="low" deletedId="fruits-2" />);
+    await waitFor(() => expect(screen.queryByText(/worksheets in this set/i)).not.toBeInTheDocument());
+  });
+});
+
 describe("worksheet type switcher", () => {
   it("switches to GT mode, hides flashcard input rows, and disables the word library", async () => {
     const user = userEvent.setup();

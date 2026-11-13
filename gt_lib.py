@@ -539,7 +539,8 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium", on_event=None) -> 
     front_path.write_bytes(front_bytes)
     try:
         back_bytes = _generate_verified_side(render_back_prompt(spec), spec["panels"], quality, "back", emit)
-    except Exception:
+    except BaseException:
+        # Cancellation also unwinds here; remove the partial pair before re-raising.
         front_path.unlink(missing_ok=True)
         raise
     back_path.write_bytes(back_bytes)

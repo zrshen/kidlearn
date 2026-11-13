@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { mswServer } from "./setup";
 import { suggestGt, generateGt, batchGt } from "../app/api";
@@ -98,5 +98,44 @@ describe("GT streaming progress", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.batches).toHaveLength(2);
     expect(indices).toEqual([0, 0, 1, 1]);
+  });
+});
+
+
+describe("GT interrupted streams", () => {
+  it("returns an error when a single generation stream disconnects", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
+      new ReadableStream({ pull(controller) { controller.error(new TypeError("connection lost")); } }),
+    ));
+    try {
+      const result = await generateGt({ title: "t", theme: "x", panels: [] });
+      expect(result).toEqual({ ok: false, kind: "error", message: expect.stringMatching(/stream|connection/i) });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("preserves completed pairs when a batch stream disconnects", async () => {
+    let sent = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (sent) { controller.error(new TypeError("connection lost")); return; }
+          sent = true;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            type: "done", index: 0, pair: { id: "a-1", front_url: "/g/a", back_url: "/g/b" },
+          }) + "\n"));
+        },
+      }),
+    ));
+    try {
+      const result = await batchGt(null, null, 2);
+      expect(result).toEqual({
+        ok: false, message: expect.stringMatching(/stream|connection/i),
+        completed: [expect.objectContaining({ id: "a-1", frontUrl: `${API}/g/a` })],
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

@@ -684,3 +684,18 @@ def test_verification_failed_error_carries_mismatches():
     mismatches = [{"panel": 2, "note": "x"}]
     err = gt_lib.VerificationFailedError(mismatches)
     assert err.mismatches == mismatches
+
+
+def test_generate_gt_pair_cleans_up_front_on_client_disconnect(gt_gen_dir, monkeypatch):
+    from server.main import _ClientDisconnected
+
+    monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
+
+    def disconnect_on_back(event):
+        if event.get("side") == "back":
+            assert len(list(gt_gen_dir.glob("gt-*-front.png"))) == 1
+            raise _ClientDisconnected()
+
+    with pytest.raises(_ClientDisconnected):
+        gt_lib.generate_gt_pair(_spec(), on_event=disconnect_on_back)
+    assert list(gt_gen_dir.glob("gt-*")) == []

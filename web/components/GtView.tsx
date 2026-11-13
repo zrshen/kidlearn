@@ -103,6 +103,7 @@ export function GtView({
   const [progressLog, setProgressLog] = useState<LogEntry[]>([]);
   const [batchTotal, setBatchTotal] = useState(0);
   const [currentBatchStatus, setCurrentBatchStatus] = useState("");
+  const visibleBatchTotal = busy ? batchTotal : batchPairs.length;
   const effectiveTest = customTest.trim() || builtinTest;
   const usingCustom = customTest.trim().length > 0;
   const abortRef = useRef<AbortController | null>(null);
@@ -137,6 +138,8 @@ export function GtView({
       setPair(selectedPair);
       setSpec(selectedPair.spec ?? null);
       setBatchPairs([]);
+      setBatchTotal(0);
+      setCurrentBatchStatus("");
       setBanner({ kind: "none" });
       setBusy(false);
     }
@@ -236,38 +239,40 @@ export function GtView({
 
   return (
     <section>
-      <fieldset className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm">
-        <legend className="label-eyebrow float-none px-0">Test focus</legend>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          {TEST_BUILTINS.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => {
-                setBuiltinTest(b.id);
-                setCustomTest("");
-              }}
-              aria-pressed={!usingCustom && builtinTest === b.id}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
-                !usingCustom && builtinTest === b.id
-                  ? "bg-primary text-on-primary"
-                  : "border border-border text-ink-soft hover:bg-border hover:text-ink"
-              }`}
-            >
-              {b.label}
-            </button>
-          ))}
-          <input
-            type="text"
-            value={customTest}
-            onChange={(e) => setCustomTest(e.target.value)}
-            placeholder="Other test…"
-            aria-label="Other test"
-            maxLength={60}
-            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
-          />
-        </div>
-      </fieldset>
+      <div className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm">
+        <fieldset className="min-w-0">
+          <legend className="label-eyebrow px-0">Test focus</legend>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {TEST_BUILTINS.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => {
+                  setBuiltinTest(b.id);
+                  setCustomTest("");
+                }}
+                aria-pressed={!usingCustom && builtinTest === b.id}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+                  !usingCustom && builtinTest === b.id
+                    ? "bg-primary text-on-primary"
+                    : "border border-border text-ink-soft hover:bg-border hover:text-ink"
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+            <input
+              type="text"
+              value={customTest}
+              onChange={(e) => setCustomTest(e.target.value)}
+              placeholder="Other test…"
+              aria-label="Other test"
+              maxLength={60}
+              className="min-w-[10rem] flex-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
+            />
+          </div>
+        </fieldset>
+      </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-card-sm">
         <button
@@ -376,10 +381,10 @@ export function GtView({
         </div>
       )}
 
-      {batchTotal > 0 && (
+      {visibleBatchTotal > 0 && (
         <GtBatchPreview
           pairs={batchPairs}
-          total={batchTotal}
+          total={visibleBatchTotal}
           currentStatus={currentBatchStatus}
           onSelect={(p) => {
             setPair(p);

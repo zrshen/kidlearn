@@ -414,35 +414,34 @@ function QualityPanel({
     { label: "High", value: "high" },
   ];
   return (
-    <fieldset
-      className="block rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm"
-      aria-label="Image quality"
-    >
-      <legend className="label-eyebrow float-none px-0">Quality</legend>
-      <div className="mt-1.5 flex gap-0 rounded-lg bg-border p-[2px]">
-        {options.map((o) => (
-          <label
-            key={o.value}
-            className={`flex-1 cursor-pointer rounded-md py-1.5 text-center text-[0.85rem] font-medium transition-all ${
-              value === o.value
-                ? "bg-surface text-ink shadow-card-sm"
-                : "text-ink-soft hover:text-ink"
-            } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-          >
-            <input
-              type="radio"
-              name="quality"
-              value={o.value}
-              checked={value === o.value}
-              onChange={() => onChange(o.value)}
-              disabled={disabled}
-              className="sr-only"
-            />
-            {o.label}
-          </label>
-        ))}
-      </div>
-    </fieldset>
+    <div className="rounded-xl border border-border bg-surface px-4 py-3 shadow-card-sm">
+      <fieldset className="min-w-0" aria-label="Image quality">
+        <legend className="label-eyebrow px-0">Quality</legend>
+        <div className="mt-1.5 flex h-10 gap-0 rounded-lg bg-border p-[2px]">
+          {options.map((o) => (
+            <label
+              key={o.value}
+              className={`flex-1 cursor-pointer rounded-md py-1.5 text-center text-[0.85rem] font-medium transition-all ${
+                value === o.value
+                  ? "bg-surface text-ink shadow-card-sm"
+                  : "text-ink-soft hover:text-ink"
+              } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+            >
+              <input
+                type="radio"
+                name="quality"
+                value={o.value}
+                checked={value === o.value}
+                onChange={() => onChange(o.value)}
+                disabled={disabled}
+                className="sr-only"
+              />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </div>
   );
 }
 
