@@ -1,6 +1,8 @@
 """GT (gifted-and-talented) thinking worksheet generator. No FastAPI/CLI imports."""
 from __future__ import annotations
 
+from worksheet_language import Language, validate_language, CHINESE_RENDER_RULES
+
 import base64
 import json
 import os
@@ -117,6 +119,7 @@ def clamp_panels(n: int | None) -> int:
 
 
 def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
+    validate_language(spec.get("language", "en"))
     panels = spec.get("panels")
     if not isinstance(panels, list):
         raise ValueError("expected a list of panels, got none")
@@ -183,7 +186,8 @@ def _sample_subtypes(keys: list[str], count: int) -> list[str]:
     return picks
 
 
-def _build_suggest_messages(topic: str | None, profile: dict, count: int) -> list[dict]:
+def _build_suggest_messages(topic: str | None, profile: dict, count: int, language: Language = "en") -> list[dict]:
+    validate_language(language)
     catalog = profile["catalog"]
     catalog_lines = "\n".join(f"- {k}: {v}" for k, v in catalog.items())
 
@@ -241,20 +245,24 @@ Rules:
 - The answer MUST be correct and consistent with the question and the scene.
 - Return JSON exactly: {{"title": "...", "theme": "...", "panels": [ ...{count} panels... ]}}
 """
+    if language == "zh-CN":
+        user += "\nWrite title, theme, headings, questions, items, choices, instructions, answers, and explanations in natural, short simplified Chinese suitable for beginning readers. Keep technical type keys and A/B/C labels unchanged. Drawing scene descriptions may remain English. No pinyin or English translations in JSON; pinyin is added when rendering."
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
 
 
-def _finalize_spec(spec: dict, profile: dict, expected_panels: int | None = None) -> dict:
+def _finalize_spec(spec: dict, profile: dict, expected_panels: int | None = None, language: Language = "en") -> dict:
+    spec["language"] = validate_language(language)
     validate_spec(spec, expected_panels)
-    spec["title"] = profile["title"]
+    spec["title"] = (spec.get("title") or "幼儿思维练习") if language == "zh-CN" else profile["title"]
     spec["test"] = profile["label"]
     return spec
 
 
-def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | None = None) -> dict:
+def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | None = None, language: Language = "en") -> dict:
+    validate_language(language)
     profile = resolve_profile(test)
     count = clamp_panels(panels)
     stub = os.environ.get("GT_STUB_SPEC")
@@ -265,8 +273,8 @@ def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | No
         fixture_panels = spec.get("panels")
         if isinstance(fixture_panels, list) and len(fixture_panels) > count:
             spec["panels"] = fixture_panels[:count]
-        return _finalize_spec(spec, profile, expected_panels=count)
-    messages = _build_suggest_messages(topic, profile, count)
+        return _finalize_spec(spec, profile, expected_panels=count, language=language)
+    messages = _build_suggest_messages(topic, profile, count, language)
     last_reason = "no attempts made"
     for _ in range(SUGGEST_MAX_RETRIES + 1):
         try:
@@ -280,7 +288,7 @@ def suggest_gt_spec(topic: str | None, test: str | None = None, panels: int | No
             if not content:
                 last_reason = "empty response from model"
                 continue
-            return _finalize_spec(json.loads(content), profile, expected_panels=count)
+            return _finalize_spec(json.loads(content), profile, expected_panels=count, language=language)
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             last_reason = f"could not parse model response: {e}"
             continue
@@ -331,11 +339,15 @@ def _panel_block(p: dict, *, reveal: bool) -> str:
 
 
 def render_front_prompt(spec: dict) -> str:
-    title = spec.get("title", GT_TITLE)
+    language = validate_language(spec.get("language", "en"))
+    chinese = language == "zh-CN"
+    language_rules = CHINESE_RENDER_RULES if chinese else ""
+    title = spec.get("title", "幼儿思维练习" if chinese else GT_TITLE)
     panels = "\n\n".join(_panel_block(p, reveal=False) for p in spec["panels"])
     return f"""Create ONE educational worksheet image for a Kindergarten student.
 
 TITLE: "{title}"
+{language_rules}
 
 OUTPUT: FRONT side only. Do NOT include answers. One image only.
 
@@ -345,7 +357,7 @@ USE EXACTLY THIS CONTENT:
 
 {panels}
 
-BOTTOM BANNER: "Think carefully and choose the best answer!"
+BOTTOM BANNER: "{'仔细想一想，选出最佳答案！' if chinese else 'Think carefully and choose the best answer!'}"
 
 IMPORTANT:
 - FRONT side only. No answers visible. Do not circle any answer. Do not reveal the solution.
@@ -353,14 +365,18 @@ IMPORTANT:
 
 
 def render_back_prompt(spec: dict) -> str:
-    title = spec.get("title", GT_TITLE)
+    language = validate_language(spec.get("language", "en"))
+    chinese = language == "zh-CN"
+    language_rules = CHINESE_RENDER_RULES if chinese else ""
+    title = spec.get("title", "幼儿思维练习" if chinese else GT_TITLE)
     panels = "\n\n".join(_panel_block(p, reveal=True) for p in spec["panels"])
     return f"""Create ONE educational worksheet image for a Kindergarten student.
 
 TITLE: "{title}"
+{language_rules}
 
 OUTPUT: BACK side only (answer key). One image only. Match the front worksheet's layout.
-Clearly mark this as the answer page with the words "Back (Answers)".
+Clearly mark this as the answer page with the words "{'背面（答案）' if chinese else 'Back (Answers)'}".
 
 {_page_format(len(spec["panels"]))}
 
@@ -373,7 +389,7 @@ BACK-SIDE RULES:
 - Reveal the correct answer clearly; circle or highlight the correct choice.
 - Add a short answer label in each panel. Keep the layout aligned with the front.
 
-BOTTOM BANNER: "Great job! Keep thinking and learning!"
+BOTTOM BANNER: "{'真棒！继续思考，快乐学习！' if chinese else 'Great job! Keep thinking and learning!'}"
 
 IMPORTANT:
 - BACK side only. Keep all text spelled correctly. Make the answer key visually clear and classroom-friendly."""
@@ -490,6 +506,8 @@ wrong again. Return the full corrected prompt text only, no commentary.""",
             if not content or not content.strip():
                 last_reason = "empty response from model"
                 continue
+            if CHINESE_RENDER_RULES in prev_prompt and CHINESE_RENDER_RULES not in content:
+                content += CHINESE_RENDER_RULES
             return content
         except OpenAIError as e:
             last_reason = f"model request failed: {e}"
@@ -555,6 +573,7 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium", on_event=None) -> 
 
     manifest = {
         "kind": "gt",
+        "language": spec.get("language", "en"),
         "id": gid,
         "theme": theme,
         "test": str(spec.get("test", "")),
@@ -563,7 +582,7 @@ def generate_gt_pair(spec: dict, quality: Quality = "medium", on_event=None) -> 
         "back": back_path.name,
     }
     manifest_path.write_text(json.dumps(manifest) + "\n")
-    return {"id": gid, "front_url": f"/generated/{front_path.name}", "back_url": f"/generated/{back_path.name}"}
+    return {"id": gid, "language": spec.get("language", "en"), "front_url": f"/generated/{front_path.name}", "back_url": f"/generated/{back_path.name}"}
 
 
 class PartialBatchError(Exception):
@@ -580,7 +599,9 @@ def batch_generate_gt(
     quality: Quality = "medium",
     panels: int | None = None,
     on_event=None,
+    language: Language = "en",
 ) -> list[dict]:
+    validate_language(language)
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
     emit = on_event or (lambda e: None)
@@ -591,7 +612,7 @@ def batch_generate_gt(
 
         try:
             tagged({"type": "step", "message": "Writing worksheet content…"})
-            spec = suggest_gt_spec(topic, test, panels)
+            spec = suggest_gt_spec(topic, test, panels, language=language)
             tagged({"type": "content_ready", "theme": str(spec.get("theme", "")), "panels": len(spec["panels"])})
             pair = generate_gt_pair(spec, quality=quality, on_event=tagged)
         except Exception as e:
@@ -618,6 +639,7 @@ def list_gt_pairs() -> list[dict]:
             {
                 "id": m.get("id", mp.stem.removeprefix("gt-")),
                 "theme": m.get("theme", ""),
+                "language": m.get("language", "en"),
                 "test": m.get("test", ""),
                 "front_url": f"/generated/{m.get('front', '')}",
                 "back_url": f"/generated/{m.get('back', '')}",

@@ -43,6 +43,24 @@ app's header tabs.
   and **back** (answer key) image pair that print as two pages. GT sheets are
   freshly generated each time and don't use the no-repeat word library.
 
+## Worksheet languages
+
+Choose **English** (default) or **简体中文 + 拼音** in the worksheet language selector.
+Both Flashcard and GT Thinking support simplified Chinese, with tone-mark Mandarin
+pinyin above child-facing text. The app controls remain English. Topics may be
+entered in English or Chinese; Chinese flashcards can also be edited manually.
+
+Pinyin is added by the image model during rendering, so it is not a separate editable
+field. Review the rendered characters and pronunciation before printing; GT image
+verification checks object counts, not spelling or pinyin accuracy.
+
+Saved worksheets include language badges; existing archives without language metadata
+are treated as English. Chinese vocabulary is recorded in the same no-repeat library.
+
+The flashcard suggest/generate/batch and GT suggest/batch APIs accept optional
+`language: "en" | "zh-CN"`, defaulting to `"en"`. GT specs carry `language`, and
+`/api/gt/generate` uses the language stored in its spec. Older specs default to English.
+
 ## Quickstart
 
 ```bash

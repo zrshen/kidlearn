@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { batchGenerate, type Batch, type Quality } from "../app/api";
+import { useEffect, useState } from "react";
+import { batchGenerate, type Batch, type Quality, type Language } from "../app/api";
 import { clampInt } from "../app/clamp";
 
 const MIN = 1;
@@ -10,6 +10,7 @@ const CONFIRM_THRESHOLD = 3;
 export function BatchControls({
   topic,
   quality,
+  language = "en",
   getSignal,
   onBatchDone,
   onError,
@@ -19,6 +20,7 @@ export function BatchControls({
 }: {
   topic: string;
   quality?: Quality;
+  language?: Language;
   getSignal?: () => AbortSignal;
   onBatchDone: (batches: Batch[]) => void;
   onError: (msg: string, completed?: Batch[]) => void;
@@ -30,6 +32,11 @@ export function BatchControls({
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPendingConfirm(false);
+  }, [language]);
+
   function clampedN(): number {
     return clampInt(n, MIN, MAX, MIN);
   }
@@ -39,7 +46,7 @@ export function BatchControls({
     setBusy(true);
     onBusyChange?.(true);
     const signal = getSignal?.();
-    const result = await batchGenerate(topic.trim() || null, effective, quality, signal);
+    const result = await batchGenerate(topic.trim() || null, effective, quality, signal, language);
     setBusy(false);
     onBusyChange?.(false);
     setPendingConfirm(false);

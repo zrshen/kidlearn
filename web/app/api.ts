@@ -1,6 +1,7 @@
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type Item = { word: string; sentence: string };
+export type Language = "en" | "zh-CN";
 export type Quality = "low" | "medium" | "high";
 
 export type GenerateResult =
@@ -69,6 +70,7 @@ export type GeneratedEntry = {
   word: string;
   words: string[];
   hasMetadata: boolean;
+  language?: Language;
   mtime: number;
 };
 
@@ -82,6 +84,7 @@ export async function fetchGenerated(): Promise<GeneratedEntry[]> {
       word: string;
       words: string[];
       has_metadata: boolean;
+      language?: Language;
       mtime: number;
     }[];
   };
@@ -91,6 +94,7 @@ export async function fetchGenerated(): Promise<GeneratedEntry[]> {
     word: e.word,
     words: e.words,
     hasMetadata: e.has_metadata,
+    language: e.language ?? "en",
     mtime: e.mtime,
   }));
 }
@@ -122,13 +126,14 @@ export async function generate(
   items: Item[],
   quality: Quality = "medium",
   signal?: AbortSignal,
+  language: Language = "en",
 ): Promise<GenerateResult> {
   let r: Response;
   try {
     r = await fetch(`${API}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, quality }),
+      body: JSON.stringify({ items, quality, language }),
       signal,
     });
   } catch (e) {
@@ -155,13 +160,14 @@ export type SuggestResult =
 export async function suggest(
   topic: string | null,
   signal?: AbortSignal,
+  language: Language = "en",
 ): Promise<SuggestResult> {
   let r: Response;
   try {
     r = await fetch(`${API}/api/suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic }),
+      body: JSON.stringify({ topic, language }),
       signal,
     });
   } catch (e) {
@@ -193,13 +199,14 @@ export async function batchGenerate(
   n: number,
   quality: Quality = "medium",
   signal?: AbortSignal,
+  language: Language = "en",
 ): Promise<BatchResult> {
   let r: Response;
   try {
     r = await fetch(`${API}/api/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, n, quality }),
+      body: JSON.stringify({ topic, n, quality, language }),
       signal,
     });
   } catch (e) {
@@ -235,7 +242,7 @@ export type GtPanel = {
   answer: string;
   explanation?: string;
 };
-export type GtSpec = { title: string; theme: string; test?: string; panels: GtPanel[] };
+export type GtSpec = { language?: Language; title: string; theme: string; test?: string; panels: GtPanel[] };
 
 export type GtSuggestResult =
   | { ok: true; spec: GtSpec }
@@ -247,13 +254,14 @@ export async function suggestGt(
   test: string | null = null,
   panels: number | null = null,
   signal?: AbortSignal,
+  language: Language = "en",
 ): Promise<GtSuggestResult> {
   let r: Response;
   try {
     r = await fetch(`${API}/api/gt/suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, test, panels }),
+      body: JSON.stringify({ topic, test, panels, language }),
       signal,
     });
   } catch (e) {
@@ -268,18 +276,19 @@ export async function suggestGt(
   return { ok: false, message: j.error ?? `server ${r.status}` };
 }
 
-export type GtPair = { id: string; theme: string; test: string; frontUrl: string; backUrl: string; spec?: GtSpec | null };
+export type GtPair = { language?: Language; id: string; theme: string; test: string; frontUrl: string; backUrl: string; spec?: GtSpec | null };
 
 export type GtGenerateResult =
   | { ok: true; pair: GtPair }
   | { ok: false; kind: "error"; message: string }
   | { ok: false; kind: "cancelled" };
 
-type GtPairRaw = { id: string; theme?: string; test?: string; front_url: string; back_url: string; spec?: GtSpec | null };
+type GtPairRaw = { language?: Language; id: string; theme?: string; test?: string; front_url: string; back_url: string; spec?: GtSpec | null };
 
 function toGtPair(raw: GtPairRaw): GtPair {
   return {
     id: raw.id,
+    language: raw.language ?? raw.spec?.language ?? "en",
     theme: raw.theme ?? "",
     test: raw.test ?? "",
     frontUrl: `${API}${raw.front_url}`,
@@ -346,13 +355,14 @@ export async function batchGt(
   quality: Quality = "medium",
   signal?: AbortSignal,
   onEvent?: (e: GtProgressEvent) => void,
+  language: Language = "en",
 ): Promise<GtBatchResult> {
   let r: Response;
   try {
     r = await fetch(`${API}/api/gt/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, test, n, panels, quality }),
+      body: JSON.stringify({ topic, test, n, panels, quality, language }),
       signal,
     });
   } catch (e) {

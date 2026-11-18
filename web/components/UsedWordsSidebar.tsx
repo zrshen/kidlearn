@@ -12,7 +12,7 @@ export function UsedWordsSidebar({ words }: { words: string[] }) {
   const groups = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const w of visible) {
-      const key = (w[0] || "·").toUpperCase();
+      const key = /\p{Script=Han}/u.test(w) ? "Chinese" : (w[0] || "·").toUpperCase();
       const arr = map.get(key) ?? [];
       arr.push(w);
       map.set(key, arr);

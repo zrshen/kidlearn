@@ -737,7 +737,7 @@ def test_batch_reports_writing_before_suggesting_content(gt_gen_dir, monkeypatch
     monkeypatch.setenv("GT_STUB_IMAGE", str(_write_stub_png(gt_gen_dir)))
     events = []
 
-    def suggest(*args):
+    def suggest(*args, **kwargs):
         assert events == [{"type": "step", "message": "Writing worksheet content…", "index": 0}]
         return _spec()
 

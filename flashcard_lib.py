@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Iterable, TypedDict
 
+from worksheet_language import Language, validate_language, CHINESE_RENDER_RULES
 from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
 
 
@@ -47,8 +48,15 @@ def read_sidecar_words(png_path: Path) -> list[str]:
     return _normalize_words(data.get("words", []))
 
 
-def write_sidecar(png_path: Path, words: list[str]) -> None:
-    _sidecar_path(png_path).write_text(json.dumps({"words": words}) + "\n")
+def write_sidecar(png_path: Path, words: list[str], language: Language = "en") -> None:
+    _sidecar_path(png_path).write_text(json.dumps({"words": words, "language": validate_language(language)}, ensure_ascii=False) + "\n")
+
+
+def read_sidecar_language(png_path: Path) -> Language:
+    try:
+        return validate_language(json.loads(_sidecar_path(png_path).read_text()).get("language", "en"))
+    except (OSError, ValueError, AttributeError):
+        return "en"
 
 
 import base64
@@ -112,12 +120,19 @@ class ConflictError(Exception):
         self.conflicts = conflicts
 
 
-def _render_prompt(items: list[WordSentence]) -> str:
+def _render_prompt(items: list[WordSentence], language: Language = "en") -> str:
+    validate_language(language)
     fmt: dict[str, str] = {}
     for i, item in enumerate(items, start=1):
         fmt[f"word_{i}"] = item["word"]
         fmt[f"sentence_{i}"] = item["sentence"]
-    return FLASHCARD_PROMPT_TEMPLATE.format(**fmt)
+    prompt = FLASHCARD_PROMPT_TEMPLATE.format(**fmt)
+    if language == "zh-CN":
+        prompt = prompt.replace("A large lowercase vocabulary word", "A large simplified Chinese vocabulary word")
+        prompt = prompt.replace("Do not add any extra words beyond the given title and sentence.",
+                                "Do not add any extra text beyond the given title and sentence, except their pinyin.")
+        prompt += CHINESE_RENDER_RULES
+    return prompt
 
 
 def _openai_client() -> OpenAI:
@@ -136,11 +151,12 @@ def _used_words_lock():
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-def _produce_png_bytes(items: list[WordSentence], quality: Quality = "medium") -> bytes:
-    return produce_png_bytes(_render_prompt(items), quality, "FLASHCARD_STUB_IMAGE", _openai_client)
+def _produce_png_bytes(items: list[WordSentence], quality: Quality = "medium", language: Language = "en") -> bytes:
+    return produce_png_bytes(_render_prompt(items, language), quality, "FLASHCARD_STUB_IMAGE", _openai_client)
 
 
-def generate_and_record(items: list[WordSentence], quality: Quality = "medium") -> Path:
+def generate_and_record(items: list[WordSentence], quality: Quality = "medium", language: Language = "en") -> Path:
+    validate_language(language)
     if len(items) != 6:
         raise ValueError(f"expected 6 items, got {len(items)}")
     items = [{**i, "word": i["word"].strip().lower()} for i in items]
@@ -151,10 +167,10 @@ def generate_and_record(items: list[WordSentence], quality: Quality = "medium") 
         conflicts = find_conflicts(new_words, used)
         if conflicts:
             raise ConflictError(conflicts)
-        png_bytes = _produce_png_bytes(items, quality=quality)
+        png_bytes = _produce_png_bytes(items, quality=quality, language=language)
         out_path = GENERATED_DIR / f"image-{items[0]['word']}.png"
         out_path.write_bytes(png_bytes)
-        write_sidecar(out_path, new_words)
+        write_sidecar(out_path, new_words, language)
         save_used_words(used | set(new_words))
     return out_path
 
@@ -187,7 +203,8 @@ class SuggestionError(Exception):
         self.reason = reason
 
 
-def _build_suggest_messages(used: set[str], topic: str | None) -> list[dict]:
+def _build_suggest_messages(used: set[str], topic: str | None, language: Language = "en") -> list[dict]:
+    validate_language(language)
     sorted_used = sorted(used)
     topic_rule = (
         f'- All 6 words must belong to the same topic: "{topic}". '
@@ -214,6 +231,13 @@ Rules:
 Return JSON in this exact shape:
 {{"items": [{{"word": "...", "sentence": "..."}}, ...]}}
 """
+    if language == "zh-CN":
+        user = user.replace("single words", "Chinese vocabulary words (one or more characters)")
+        user = user.replace("Each sentence: short (4-8 words), uses the word exactly once.",
+                            "Each sentence: short natural simplified Chinese (about 5–12 characters), uses the word exactly once.")
+        user = user.replace("- Lowercase the words.\n", "")
+        user = user.replace("- Capitalize the first letter of each sentence and end with a period.",
+                            "- Use simplified Chinese characters only for words and sentences; end sentences with Chinese punctuation. No pinyin or English translations in JSON; pinyin is added during image rendering.")
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -236,12 +260,13 @@ def _parse_suggest_response(content: str) -> list[WordSentence]:
     return items
 
 
-def suggest_items(used: set[str], topic: str | None) -> list[WordSentence]:
+def suggest_items(used: set[str], topic: str | None, language: Language = "en") -> list[WordSentence]:
+    validate_language(language)
     stub = os.environ.get("FLASHCARD_STUB_SUGGEST")
     if stub:
         return _parse_suggest_response(Path(stub).read_text())
     used_lower = {w.lower() for w in used}
-    messages = _build_suggest_messages(used, topic)
+    messages = _build_suggest_messages(used, topic, language)
     last_reason = "no attempts made"
     last_content: str | None = None
     for _ in range(SUGGEST_MAX_RETRIES + 1):
@@ -300,7 +325,7 @@ def extract_words_from_image(png_path: Path) -> list[str]:
                             "This image is a Kindergarten flashcard worksheet with exactly 6 cards "
                             "in a 3x2 grid. Each card has one large bold word at the top. "
                             "Return those 6 title words in reading order (left-to-right, top-to-bottom), "
-                            "lowercased, with no punctuation. "
+                            "with no punctuation; lowercase English words. For Chinese cards, return only the Chinese characters, not pinyin. "
                             'Respond with JSON only: {"words": ["w1","w2","w3","w4","w5","w6"]}'
                         ),
                     },
@@ -340,7 +365,8 @@ def backfill_missing_sidecars() -> dict:
             if not words:
                 failed.append(f"{png.name}: empty extraction")
                 continue
-            write_sidecar(png, words)
+            language: Language = "zh-CN" if any("\u3400" <= c <= "\u9fff" for w in words for c in w) else "en"
+            write_sidecar(png, words, language)
             backfilled.append({"filename": png.name, "words": words})
     return {"backfilled": backfilled, "failed": failed}
 
@@ -357,15 +383,16 @@ class PartialBatchError(Exception):
         self.reason = reason
 
 
-def batch_generate(n: int, topic: str | None, quality: Quality = "medium") -> list[BatchEntry]:
+def batch_generate(n: int, topic: str | None, quality: Quality = "medium", language: Language = "en") -> list[BatchEntry]:
+    validate_language(language)
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
     completed: list[BatchEntry] = []
     for i in range(n):
         used = load_used_words()
         try:
-            items = suggest_items(used, topic)
-            out_path = generate_and_record(items, quality=quality)
+            items = suggest_items(used, topic, language=language)
+            out_path = generate_and_record(items, quality=quality, language=language)
         except Exception as e:
             raise PartialBatchError(
                 completed=completed,

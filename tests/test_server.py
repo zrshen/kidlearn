@@ -245,7 +245,7 @@ def test_gt_generate_streams_error_event_on_image_failure(client):
 
 
 def test_gt_batch_streams_done_per_item_then_batch_done(client):
-    def fake_batch(n, topic, test=None, quality="medium", panels=None, on_event=None):
+    def fake_batch(n, topic, test=None, quality="medium", panels=None, on_event=None, language="en"):
         emit = on_event or (lambda e: None)
         for i in range(n):
             emit({"type": "done", "index": i, "pair": {"id": f"a-{i}", "front_url": "x", "back_url": "y"}})

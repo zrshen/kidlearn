@@ -1,4 +1,5 @@
 "use client";
+import { LanguageBadge } from "./LanguageSelector";
 import { useMemo, useState } from "react";
 import type { GeneratedEntry } from "../app/api";
 
@@ -213,7 +214,7 @@ export function HistorySidebar({
                                 {e.words.length > 1 ? e.words.join(", ") : e.word}
                               </span>
                               <span className="block font-mono text-[0.7rem] text-ink-faint">
-                                {formatTime(e.mtime)}
+                                {formatTime(e.mtime)} <LanguageBadge language={e.language} />
                               </span>
                             </span>
                           </button>
