@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "./WorksheetImage";
 import { LanguageBadge } from "./LanguageSelector";
 import { useId, useState } from "react";
 import type { GtHistoryEntry } from "../app/api";
@@ -57,7 +58,7 @@ export function GtHistorySidebar({
               className="block w-full text-left"
             >
               <div className="relative aspect-[3/2] bg-bg">
-                <img src={e.frontUrl} alt={e.theme || e.id} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+                <WorksheetImage src={e.frontUrl} alt={e.theme || e.id} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
                 <span className="absolute right-1.5 top-1.5 flex gap-1">
                   <span className="rounded-full bg-black/60 px-1.5 py-px font-mono text-[0.55rem] font-semibold text-white">FRONT</span>
                   <span className="rounded-full bg-black/60 px-1.5 py-px font-mono text-[0.55rem] font-semibold text-white">BACK</span>

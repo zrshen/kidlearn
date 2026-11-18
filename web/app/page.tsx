@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "../components/WorksheetImage";
 import { useEffect, useRef, useState } from "react";
 import { BatchControls } from "../components/BatchControls";
 import { BatchPreview } from "../components/BatchPreview";
@@ -304,10 +305,10 @@ export default function Page() {
                     </button>
                   </span>
                 </figcaption>
-                <img
+                <WorksheetImage
                   src={imageUrl}
                   alt="generated worksheet"
-                  className="print-target w-full"
+                  className="print-target h-auto w-full"
                   data-testid="preview"
                 />
               </figure>

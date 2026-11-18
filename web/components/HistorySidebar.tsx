@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "./WorksheetImage";
 import { LanguageBadge } from "./LanguageSelector";
 import { useMemo, useState } from "react";
 import type { GeneratedEntry } from "../app/api";
@@ -198,7 +199,7 @@ export function HistorySidebar({
                             onClick={() => onSelect(e.url)}
                             className="flex min-w-0 flex-1 items-center gap-3 text-left"
                           >
-                            <img
+                            <WorksheetImage
                               src={e.url}
                               alt={`worksheet starting with ${e.word}`}
                               loading="lazy"

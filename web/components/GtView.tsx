@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "./WorksheetImage";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
@@ -466,7 +467,7 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
           {tone === "front" ? "FRONT" : "BACK"}
         </span>
       </figcaption>
-      <img src={src} alt={label} className="w-full" data-testid={testid} />
+      <WorksheetImage src={src} alt={label} className="h-auto w-full" data-testid={testid} />
     </figure>
   );
 }
@@ -498,7 +499,7 @@ function GtBatchPreview({
             data-testid={`gt-batch-${i}`}
           >
             <div className="relative aspect-[3/2] bg-bg">
-              <img
+              <WorksheetImage
                 src={p.frontUrl}
                 alt={p.theme || `worksheet ${i + 1}`}
                 loading="lazy"
@@ -538,11 +539,11 @@ function GtPrintPortal({ frontUrl, backUrl, scope }: { frontUrl: string; backUrl
   return createPortal(
     <div className="gt-print-target" aria-hidden>
       <div className="pg">
-        <img src={frontUrl} alt="" />
+        <WorksheetImage src={frontUrl} alt="" />
       </div>
       {scope === "both" && (
         <div className="pg">
-          <img src={backUrl} alt="" />
+          <WorksheetImage src={backUrl} alt="" />
         </div>
       )}
     </div>,

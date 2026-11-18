@@ -14,6 +14,7 @@ export function ndjson(events: unknown[]) {
 }
 
 export const handlers = [
+  http.get(`${API}/api/generated`, () => HttpResponse.json({ items: [] })),
   http.get(`${API}/api/used-words`, () =>
     HttpResponse.json({ words: ["alpha", "beta", "gamma"], count: 3 })
   ),
