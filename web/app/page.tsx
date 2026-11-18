@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "../components/WorksheetImage";
 import { useEffect, useRef, useState } from "react";
 import { BatchControls } from "../components/BatchControls";
 import { BatchPreview } from "../components/BatchPreview";
@@ -10,6 +11,7 @@ import { UsedWordsSidebar } from "../components/UsedWordsSidebar";
 import { WorksheetTypeSwitcher, type WorksheetType } from "../components/WorksheetTypeSwitcher";
 import { GtView } from "../components/GtView";
 import { GtHistorySidebar } from "../components/GtHistorySidebar";
+import { LanguageSelector } from "../components/LanguageSelector";
 import { ThemeToggle } from "../components/ThemeToggle";
 import {
   backfillGenerated,
@@ -25,6 +27,7 @@ import {
   type GeneratedEntry,
   type GtHistoryEntry,
   type Quality,
+  type Language,
 } from "./api";
 
 type Banner =
@@ -33,6 +36,8 @@ type Banner =
   | { kind: "error"; message: string };
 
 export default function Page() {
+  const [language, setLanguage] = useState<Language>("en");
+  const [gtBusy, setGtBusy] = useState(false);
   const [topic, setTopic] = useState("");
   const [quality, setQuality] = useState<Quality>("medium");
   const [items, setItems] = useState<Item[]>(emptyItems());
@@ -131,7 +136,7 @@ export default function Page() {
     );
     if (needsSuggest) {
       setSuggesting(true);
-      const sug = await suggest(topic.trim() || null, signal);
+      const sug = await suggest(topic.trim() || null, signal, language);
       setSuggesting(false);
       if (!sug.ok) {
         if ("cancelled" in sug) return;
@@ -143,7 +148,7 @@ export default function Page() {
     }
 
     setGenerating(true);
-    const result: GenerateResult = await generate(itemsToUse, quality, signal);
+    const result: GenerateResult = await generate(itemsToUse, quality, signal, language);
     setGenerating(false);
     if (result.ok) {
       setImageUrl(result.imageUrl);
@@ -196,7 +201,7 @@ export default function Page() {
         : "Suggest & Generate";
 
   return (
-    <div className="flex min-h-screen bg-bg">
+    <div className="flex min-h-screen flex-col bg-bg lg:flex-row">
       {mode === "flashcard" ? (
         <HistorySidebar
           entries={history}
@@ -231,7 +236,7 @@ export default function Page() {
           }}
         />
       )}
-      <main className="mx-auto w-full max-w-4xl flex-1 px-8 py-12">
+      <main className="mx-auto w-full min-w-0 max-w-4xl flex-1 px-8 py-12">
         <div className="mb-6 flex items-center justify-between gap-4">
           <WorksheetTypeSwitcher value={mode} onChange={setMode} />
           <ThemeToggle />
@@ -245,9 +250,15 @@ export default function Page() {
           </p>
         </header>
 
-        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           <TopicInput value={topic} onChange={setTopic} />
-          <QualityPanel value={quality} onChange={setQuality} disabled={busy} />
+          <QualityPanel value={quality} onChange={setQuality} disabled={busy || gtBusy} />
+          <LanguageSelector value={language} disabled={busy || gtBusy} onChange={(next) => {
+            setLanguage(next);
+            handleClear();
+            setGtSelected(null);
+            setGtDeletedId(null);
+          }} />
         </div>
 
         {/* GtView stays mounted (hidden when inactive) so an in-progress GT
@@ -255,6 +266,8 @@ export default function Page() {
             state lives here in the parent, so its branch can stay conditional. */}
         <div hidden={mode !== "gt"}>
           <GtView
+            language={language}
+            onBusyChange={setGtBusy}
             topic={topic}
             quality={quality}
             selectedPair={gtSelected}
@@ -292,10 +305,10 @@ export default function Page() {
                     </button>
                   </span>
                 </figcaption>
-                <img
+                <WorksheetImage
                   src={imageUrl}
                   alt="generated worksheet"
-                  className="print-target w-full"
+                  className="print-target h-auto w-full"
                   data-testid="preview"
                 />
               </figure>
@@ -318,6 +331,7 @@ export default function Page() {
               </button>
               <span className="mx-1 h-4 w-px bg-border" />
               <BatchControls
+                language={language}
                 topic={topic}
                 quality={quality}
                 getSignal={startWork}
@@ -389,7 +403,7 @@ export default function Page() {
       {mode === "flashcard" ? (
         <UsedWordsSidebar words={usedWords} />
       ) : (
-        <aside className="sticky top-0 h-screen w-[232px] flex-shrink-0 border-l border-border bg-surface p-5 opacity-50">
+        <aside className="sticky top-0 hidden h-screen w-[232px] flex-shrink-0 border-l border-border bg-surface p-5 opacity-50 lg:block">
           <span className="label-eyebrow">Word Library</span>
           <p className="mt-2 font-mono text-[0.66rem] text-ink-faint">🔒 Flashcard mode only</p>
           <p className="mt-2 text-[0.78rem] text-ink-faint">GT worksheets don’t track used words — every sheet is freshly generated.</p>

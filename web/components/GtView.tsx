@@ -1,8 +1,9 @@
 "use client";
+import { WorksheetImage } from "./WorksheetImage";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "./ErrorBanner";
-import { batchGt, generateGt, suggestGt, type GtPair, type GtProgressEvent, type GtSpec, type Quality } from "../app/api";
+import { batchGt, generateGt, suggestGt, type GtPair, type GtProgressEvent, type GtSpec, type Quality, type Language } from "../app/api";
 import { clampInt } from "../app/clamp";
 
 type Banner = { kind: "none" } | { kind: "error"; message: string };
@@ -78,12 +79,16 @@ function batchBadgeText(e: GtProgressEvent): string | null {
 export function GtView({
   topic,
   quality,
+  language = "en",
+  onBusyChange,
   selectedPair = null,
   deletedId = null,
   onGenerated,
 }: {
   topic: string;
   quality: Quality;
+  language?: Language;
+  onBusyChange?: (busy: boolean) => void;
   selectedPair?: GtPair | null;
   deletedId?: string | null;
   onGenerated?: () => void;
@@ -113,6 +118,24 @@ export function GtView({
   const pairRef = useRef<GtPair | null>(null);
   // eslint-disable-next-line react-hooks/refs
   pairRef.current = pair;
+
+  const previousLanguage = useRef(language);
+  useEffect(() => {
+    if (previousLanguage.current === language) return;
+    previousLanguage.current = language;
+    abortRef.current?.abort();
+    setPair(null);
+    setSpec(null);
+    setBatchPairs([]);
+    setBatchTotal(0);
+    setCurrentBatchStatus("");
+    setProgressLog([]);
+    setPendingBatchConfirm(false);
+    setBanner({ kind: "none" });
+    setBusy(false);
+  }, [language]);
+
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
   function startWork(): AbortSignal {
     abortRef.current?.abort();
@@ -174,7 +197,7 @@ export function GtView({
     setProgressLog([]);
     setBusy(true);
     const signal = startWork();
-    const sug = await suggestGt(topic.trim() || null, effectiveTest, clampedPanels(), signal);
+    const sug = await suggestGt(topic.trim() || null, effectiveTest, clampedPanels(), signal, language);
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     if (!sug.ok) {
@@ -217,7 +240,7 @@ export function GtView({
       }
       const text = batchBadgeText(e);
       if (text) setCurrentBatchStatus(text);
-    });
+    }, language);
     // Superseded by a newer click or a history selection — that path owns busy.
     if (signal.aborted) return;
     setBusy(false);
@@ -444,7 +467,7 @@ function SheetCard({ label, tone, src, testid }: { label: string; tone: "front" 
           {tone === "front" ? "FRONT" : "BACK"}
         </span>
       </figcaption>
-      <img src={src} alt={label} className="w-full" data-testid={testid} />
+      <WorksheetImage src={src} alt={label} className="h-auto w-full" data-testid={testid} />
     </figure>
   );
 }
@@ -476,7 +499,7 @@ function GtBatchPreview({
             data-testid={`gt-batch-${i}`}
           >
             <div className="relative aspect-[3/2] bg-bg">
-              <img
+              <WorksheetImage
                 src={p.frontUrl}
                 alt={p.theme || `worksheet ${i + 1}`}
                 loading="lazy"
@@ -516,11 +539,11 @@ function GtPrintPortal({ frontUrl, backUrl, scope }: { frontUrl: string; backUrl
   return createPortal(
     <div className="gt-print-target" aria-hidden>
       <div className="pg">
-        <img src={frontUrl} alt="" />
+        <WorksheetImage src={frontUrl} alt="" />
       </div>
       {scope === "both" && (
         <div className="pg">
-          <img src={backUrl} alt="" />
+          <WorksheetImage src={backUrl} alt="" />
         </div>
       )}
     </div>,

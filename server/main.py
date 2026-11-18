@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import flashcard_lib
 import gt_lib
+from worksheet_language import Language
 
 app = FastAPI()
 
@@ -47,6 +48,7 @@ class WordSentenceIn(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    language: Language = "en"
     items: Annotated[list[WordSentenceIn], Field(min_length=6, max_length=6)]
     quality: Quality = "medium"
 
@@ -55,7 +57,7 @@ class GenerateRequest(BaseModel):
 def generate(req: GenerateRequest) -> dict:
     items = [{"word": i.word, "sentence": i.sentence} for i in req.items]
     try:
-        out_path: Path = flashcard_lib.generate_and_record(items, quality=req.quality)
+        out_path: Path = flashcard_lib.generate_and_record(items, quality=req.quality, language=req.language)
     except flashcard_lib.ConflictError as e:
         raise HTTPException(status_code=409, detail={"conflicts": e.conflicts})
     except Exception as e:  # OpenAI or filesystem failure
@@ -64,13 +66,14 @@ def generate(req: GenerateRequest) -> dict:
 
 
 class SuggestRequest(BaseModel):
+    language: Language = "en"
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
 
 
 @app.post("/api/suggest")
 def suggest(req: SuggestRequest) -> dict:
     try:
-        items = flashcard_lib.suggest_items(flashcard_lib.load_used_words(), topic=req.topic)
+        items = flashcard_lib.suggest_items(flashcard_lib.load_used_words(), topic=req.topic, language=req.language)
     except flashcard_lib.SuggestionError as e:
         raise HTTPException(status_code=502, detail={"error": f"Couldn't generate suggestions: {e.reason}"})
     return {"items": items}
@@ -86,6 +89,7 @@ async def _http_exc(_: Request, exc: HTTPException) -> JSONResponse:
 
 
 class BatchRequest(BaseModel):
+    language: Language = "en"
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     n: Annotated[int, Field(ge=1, le=10)]
     quality: Quality = "medium"
@@ -98,7 +102,7 @@ def _translate_entry(entry: dict) -> dict:
 @app.post("/api/batch")
 def batch(req: BatchRequest) -> dict:
     try:
-        completed = flashcard_lib.batch_generate(n=req.n, topic=req.topic, quality=req.quality)
+        completed = flashcard_lib.batch_generate(n=req.n, topic=req.topic, quality=req.quality, language=req.language)
     except flashcard_lib.PartialBatchError as e:
         raise HTTPException(
             status_code=502,
@@ -157,6 +161,7 @@ def _run_streaming(target: Callable[[Callable[[dict], None]], None]) -> Iterator
 
 
 class GtSuggestRequest(BaseModel):
+    language: Language = "en"
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
     panels: Annotated[int | None, Field(default=None, ge=4, le=6)] = None
@@ -165,7 +170,7 @@ class GtSuggestRequest(BaseModel):
 @app.post("/api/gt/suggest")
 def gt_suggest(req: GtSuggestRequest) -> dict:
     try:
-        spec = gt_lib.suggest_gt_spec(req.topic, req.test, req.panels)
+        spec = gt_lib.suggest_gt_spec(req.topic, req.test, req.panels, language=req.language)
     except gt_lib.SuggestionError as e:
         raise HTTPException(status_code=502, detail={"error": f"Couldn't generate GT worksheet: {e.reason}"})
     return {"spec": spec}
@@ -192,6 +197,7 @@ def gt_generate(req: GtGenerateRequest) -> StreamingResponse:
 
 
 class GtBatchRequest(BaseModel):
+    language: Language = "en"
     topic: Annotated[str | None, Field(default=None, max_length=100)] = None
     test: Annotated[str | None, Field(default=None, max_length=60)] = None
     n: Annotated[int, Field(ge=1, le=10)]
@@ -204,7 +210,7 @@ def gt_batch(req: GtBatchRequest) -> StreamingResponse:
     def target(emit: Callable[[dict], None]) -> None:
         try:
             gt_lib.batch_generate_gt(
-                n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels, on_event=emit,
+                n=req.n, topic=req.topic, test=req.test, quality=req.quality, panels=req.panels, on_event=emit, language=req.language,
             )
         except gt_lib.PartialBatchError as e:
             emit({"type": "error", "message": e.reason})
@@ -250,6 +256,7 @@ def list_generated() -> dict:
                 "word": first_word,
                 "words": words or [first_word],
                 "has_metadata": bool(words),
+                "language": flashcard_lib.read_sidecar_language(p),
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
             }

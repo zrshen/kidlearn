@@ -1,4 +1,5 @@
 "use client";
+import { WorksheetImage } from "./WorksheetImage";
 import type { Batch } from "../app/api";
 
 export function BatchPreview({ batches }: { batches: Batch[] }) {
@@ -31,10 +32,10 @@ export function BatchPreview({ batches }: { batches: Batch[] }) {
               Print
             </button>
           </header>
-          <img
+          <WorksheetImage
             src={b.imageUrl}
             alt={`batch ${i + 1} worksheet`}
-            className="print-target w-full"
+            className="print-target h-auto w-full"
             data-testid={`batch-preview-${i}`}
           />
         </article>

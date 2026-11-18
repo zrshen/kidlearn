@@ -55,7 +55,7 @@ describe("Page", () => {
       }),
       http.post(`${API}/api/generate`, () => {
         generateCalled++;
-        return HttpResponse.json({ image_url_path: "/generated/image-carrot.png" });
+        return HttpResponse.json({ image_url: "/generated/image-carrot.png" });
       }),
     );
     const user = userEvent.setup();
@@ -78,7 +78,7 @@ describe("Page", () => {
       http.post(`${API}/api/generate`, async ({ request }) => {
         generateCalled++;
         generateBody = (await request.json()) as { items: Array<{ word: string }> };
-        return HttpResponse.json({ image_url_path: "/generated/image-tiger.png" });
+        return HttpResponse.json({ image_url: "/generated/image-tiger.png" });
       }),
     );
     const user = userEvent.setup();
@@ -106,7 +106,7 @@ describe("Page", () => {
       ),
       http.post(`${API}/api/generate`, () => {
         generateCalled++;
-        return HttpResponse.json({ image_url_path: "/generated/x.png" });
+        return HttpResponse.json({ image_url: "/generated/x.png" });
       }),
     );
     const user = userEvent.setup();

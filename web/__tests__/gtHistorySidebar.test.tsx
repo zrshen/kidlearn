@@ -34,4 +34,16 @@ describe("GtHistorySidebar", () => {
     await user.click(screen.getByRole("button", { name: /delete fruits/i }));
     expect(onDelete).toHaveBeenCalledWith("fruits-1");
   });
+  it("offers a mobile history toggle and keeps selection available when expanded", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<GtHistorySidebar entries={ENTRIES} selectedId={null} onSelect={onSelect} onDelete={() => {}} />);
+    const toggle = screen.getByRole("button", { name: /show GT history/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(screen.getByRole("button", { name: /hide GT history/i })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByText("fruits"));
+    expect(onSelect).toHaveBeenCalledWith(ENTRIES[0]);
+  });
+
 });
