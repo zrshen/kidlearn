@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, TypedDict
 
 from worksheet_language import Language, validate_language, CHINESE_RENDER_RULES
-from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
+from worksheet_common import TEXT_MODEL, GENERATED_DIR, Quality, produce_png_bytes
 
 
 class WordSentence(TypedDict):
@@ -192,7 +192,7 @@ def delete_generated(filenames: list[str]) -> dict:
     return {"deleted": deleted, "released_words": sorted(words_to_release)}
 
 
-SUGGEST_MODEL = "gpt-5.5"
+SUGGEST_MODEL = TEXT_MODEL
 SUGGEST_REASONING_EFFORT = "low"
 SUGGEST_MAX_RETRIES = 3
 
@@ -305,7 +305,7 @@ def suggest_items(used: set[str], topic: str | None, language: Language = "en") 
     raise SuggestionError(last_reason)
 
 
-VISION_MODEL = "gpt-5.5"
+VISION_MODEL = TEXT_MODEL
 
 
 def extract_words_from_image(png_path: Path) -> list[str]:

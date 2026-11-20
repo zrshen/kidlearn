@@ -219,6 +219,9 @@ def test_suggest_items_happy_path_returns_6_items():
         items = flashcard_lib.suggest_items(used, topic=None)
     assert len(items) == 6
     assert items[0] == {"word": "tiger", "sentence": "A tiger roars loud."}
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gpt-6.2-sol"
+    assert kwargs["reasoning_effort"] == "low"
     # All words present and lowercase
     assert [it["word"] for it in items] == ["tiger", "zebra", "giraffe", "fox", "panda", "owl"]
 
@@ -409,3 +412,16 @@ def test_batch_generate_partial_failure_returns_completed(isolated_lib, monkeypa
 def test_batch_generate_n_must_be_positive(isolated_lib):
     with pytest.raises(ValueError):
         flashcard_lib.batch_generate(n=0, topic=None)
+
+
+def test_word_extraction_uses_sol_with_low_reasoning(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLASHCARD_STUB_EXTRACT", raising=False)
+    png = tmp_path / "worksheet.png"
+    png.write_bytes(b"image")
+    client = _stub_chat_response(json.dumps({"words": ["apple", "banana", "pear", "plum", "peach", "lime"]}))
+    with patch.object(flashcard_lib, "_openai_client", lambda: client):
+        words = flashcard_lib.extract_words_from_image(png)
+    assert words == ["apple", "banana", "pear", "plum", "peach", "lime"]
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gpt-6.2-sol"
+    assert kwargs["reasoning_effort"] == "low"

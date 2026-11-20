@@ -140,6 +140,9 @@ def test_suggest_gt_spec_happy_path_stamps_title_and_test():
     assert len(spec["panels"]) == 6
     assert spec["title"] == gt_lib.GT_TITLE
     assert spec["test"] == "General GT"
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gpt-6.2-sol"
+    assert kwargs["reasoning_effort"] == "medium"
 
 
 def test_suggest_gt_spec_passes_topic_into_prompt():
@@ -476,7 +479,8 @@ def test_verify_image_real_call_sends_scene_and_image(monkeypatch):
         result = gt_lib.verify_image(PNG_BYTES, panels, attempt=1)
     assert result == {"passed": True, "mismatches": []}
     kwargs = client.chat.completions.create.call_args.kwargs
-    assert kwargs["model"] == gt_lib.VERIFY_MODEL
+    assert kwargs["model"] == "gpt-6.2-sol"
+    assert kwargs["reasoning_effort"] == "medium"
     content = kwargs["messages"][-1]["content"]
     text_parts = [c["text"] for c in content if c["type"] == "text"]
     assert "three orange pumpkins in a row" in "\n".join(text_parts)
@@ -534,7 +538,8 @@ def test_revise_prompt_includes_mismatches_and_original():
         out = gt_lib.revise_prompt("ORIGINAL PROMPT TEXT", [{"panel": 2, "note": "saw 4 pumpkins, expected 3"}])
     assert out == "REVISED PROMPT TEXT"
     kwargs = client.chat.completions.create.call_args.kwargs
-    assert kwargs["model"] == gt_lib.REVISE_MODEL
+    assert kwargs["model"] == "gpt-6.2-sol"
+    assert kwargs["reasoning_effort"] == "medium"
     user_msg = kwargs["messages"][-1]["content"]
     assert "ORIGINAL PROMPT TEXT" in user_msg
     assert "saw 4 pumpkins, expected 3" in user_msg

@@ -9,8 +9,8 @@ Two OpenAI models are used:
 
 | Model | Purpose |
 |---|---|
-| `gpt-image-2` | Renders the 1536×1024 worksheet PNG |
-| `gpt-5.5` | Suggests vocabulary and GT panel specs, checks image object counts, and revises GT prompts |
+| `gpt-image-2.6-sunburst` | Renders the 1536×1024 worksheet PNG |
+| `gpt-6.2-sol` | Suggests vocabulary and GT panel specs, extracts words, checks image object counts, and revises GT prompts |
 
 There are two worksheet types: **Flashcard** (the original) and **GT Thinking** —
 Kindergarten gifted-and-talented reasoning sheets. Switch between them in the web
@@ -23,7 +23,7 @@ app's header tabs.
 - **Worksheet language** — choose English or 简体中文 + 拼音 for either mode.
   Chinese pages include pinyin above child-facing text; app controls stay English.
 - **Suggest from a topic** — type a theme (animals, food, weather) or leave it
-  blank to let `gpt-5.5` pick a coherent set of 6 K-level words.
+  blank to let `gpt-6.2-sol` pick a coherent set of 6 K-level words.
 - **One-click generate** — six (word, sentence) pairs in, one PNG worksheet out.
 - **Batch mode** — generate N worksheets in a row, each on a fresh topic-coherent
   set with no word reuse.
@@ -41,7 +41,7 @@ app's header tabs.
 - **GT Thinking mode** — switch to "GT Thinking" for gifted-and-talented reasoning
   sheets: an LLM designs 4–6 themed reasoning panels (4 by default), such as
   odd-one-out, patterns, analogies, and matrices, for a chosen **test focus** (General GT, CogAT, NNAT,
-  OLSAT, or a custom test name), and `gpt-image-2` renders a **front** (questions)
+  OLSAT, or a custom test name), and `gpt-image-2.6-sunburst` renders a **front** (questions)
   and **back** (answer key) image pair that print as two pages. GT sheets are
   freshly generated each time and don't use the no-repeat word library.
 - **GT image checks** — each side is checked for object-count mismatches. Failed
@@ -78,10 +78,6 @@ verification checks object counts, not spelling or pinyin accuracy.
 Saved worksheets include language badges; existing archives without language metadata
 are treated as English. Chinese vocabulary is recorded in the same no-repeat library.
 
-The flashcard suggest/generate/batch and GT suggest/batch APIs accept optional
-`language: "en" | "zh-CN"`, defaulting to `"en"`. GT specs carry `language`, and
-`/api/gt/generate` uses the language stored in its spec. Older specs default to English.
-
 ## Quickstart
 
 ```bash
@@ -98,7 +94,7 @@ Other useful targets: `make backend`, `make frontend`, `make stop`, `make test`,
 ## Architecture
 
 ```
-worksheet_common.py  Shared image-production helper: the gpt-image-2 call plus
+worksheet_common.py  Shared image-production helper: the gpt-image-2.6-sunburst call plus
                      stub-env handling, used by both flashcard_lib and gt_lib.
 
 worksheet_language.py  Shared language values, validation, and Chinese/pinyin
@@ -127,23 +123,6 @@ used_words.json    The flashcard library. Single source of truth, fcntl-locked.
 web/               Next.js 16 (App Router) + Tailwind v4 + TypeScript.
                    Vitest + RTL + MSW for unit tests; Playwright for E2E.
 ```
-
-## API
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET`  | `/api/used-words`         | All recorded words |
-| `POST` | `/api/suggest`            | `{topic, language?}` → 6 (word, sentence) pairs |
-| `POST` | `/api/generate`           | `{items[6], quality, language?}` → image URL (409 on word conflict) |
-| `POST` | `/api/batch`              | `{topic, n, quality, language?}` → N image URLs |
-| `GET`  | `/api/generated`          | Archive listing with all 6 words and language per worksheet |
-| `POST` | `/api/generated/backfill` | Extract words from older PNGs via vision and write sidecars |
-| `POST` | `/api/generated/delete`   | Delete worksheets and release their words back to the library |
-| `POST` | `/api/gt/suggest`         | `{topic, test, panels?, language?}` → a 4–6-panel GT spec with answers (502 on failure) |
-| `POST` | `/api/gt/generate`        | `{spec, quality}` → streamed NDJSON progress, ending in `{type: "done", pair: {id, front_url, back_url}}` or `{type: "error", message}` (always HTTP 200 once the stream starts) |
-| `POST` | `/api/gt/batch`           | `{topic, test, n, panels?, quality, language?}` → streamed NDJSON: one `{type: "done", index, pair}` per completed item, then `{type: "batch_done"}`, or `{type: "error", message}` on partial failure (always HTTP 200 once the stream starts) |
-| `GET`  | `/api/gt/generated`       | GT archive listing (id, theme, test, language, front/back URLs) |
-| `POST` | `/api/gt/generated/delete`| `{ids}` → delete GT worksheet pairs by id |
 
 ## Tests
 
