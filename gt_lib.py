@@ -13,7 +13,7 @@ from pathlib import Path
 
 from openai import OpenAI, OpenAIError
 
-from worksheet_common import GENERATED_DIR, Quality, produce_png_bytes
+from worksheet_common import IMAGE_MODEL, TEXT_MODEL, GENERATED_DIR, Quality, produce_png_bytes
 
 GT_TITLE = "Kindergarten GT Thinking Practice"
 
@@ -136,12 +136,14 @@ def validate_spec(spec: dict, expected_panels: int | None = None) -> dict:
     return spec
 
 
-SUGGEST_MODEL = "gpt-5.5"
+SUGGEST_MODEL = TEXT_MODEL
 SUGGEST_REASONING_EFFORT = "medium"
 SUGGEST_MAX_RETRIES = 3
 
-VERIFY_MODEL = SUGGEST_MODEL  # gpt-5.5 — confirmed vision-capable in Task 1; reused rather than qualifying a second model
-REVISE_MODEL = SUGGEST_MODEL  # gpt-5.5, text-only prompt revision
+VERIFY_MODEL = TEXT_MODEL
+VERIFY_REASONING_EFFORT = "medium"
+REVISE_MODEL = TEXT_MODEL
+REVISE_REASONING_EFFORT = "medium"
 MAX_ATTEMPTS = 3  # 1 initial render + 2 retries, per side
 
 # Untopic'd worksheets rotate through these so unspecified-topic batches differ.
@@ -447,6 +449,7 @@ def verify_image(image_bytes: bytes, panels: list[dict], attempt: int) -> dict:
         try:
             resp = _openai_client().chat.completions.create(
                 model=VERIFY_MODEL,
+                reasoning_effort=VERIFY_REASONING_EFFORT,
                 messages=messages,
                 response_format={"type": "json_object"},
             )
@@ -480,7 +483,7 @@ def revise_prompt(prev_prompt: str, mismatches: list[dict]) -> str:
     messages = [
         {
             "role": "system",
-            "content": "You refine gpt-image-2 prompts for a Kindergarten worksheet generator.",
+            "content": f"You refine {IMAGE_MODEL} prompts for a Kindergarten worksheet generator.",
         },
         {
             "role": "user",
@@ -501,7 +504,7 @@ wrong again. Return the full corrected prompt text only, no commentary.""",
     last_reason = "no attempts made"
     for _ in range(SUGGEST_MAX_RETRIES + 1):
         try:
-            resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages)
+            resp = _openai_client().chat.completions.create(model=REVISE_MODEL, messages=messages, reasoning_effort=REVISE_REASONING_EFFORT)
             content = resp.choices[0].message.content
             if not content or not content.strip():
                 last_reason = "empty response from model"

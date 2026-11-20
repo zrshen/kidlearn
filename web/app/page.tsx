@@ -380,7 +380,7 @@ export default function Page() {
 
             <InputRows items={items} onChange={setItems} conflicts={conflictWords} />
 
-            <div className="mt-3 flex justify-between px-2 font-mono text-[0.7rem] text-ink-faint">
+            <div className="mt-3 flex flex-wrap justify-between gap-2 px-2 font-mono text-[0.7rem] text-ink-faint">
               <span className="inline-flex items-center gap-1.5">
                 <span
                   className={`inline-block h-1.5 w-1.5 rounded-full ${
@@ -391,7 +391,7 @@ export default function Page() {
                   ? `backend ready · ${usedWords.length} words in library`
                   : "connecting…"}
               </span>
-              <span>v1.0 · gpt-image-2 · gpt-5.5</span>
+              <span>v1.0 · gpt-image-2.6-sunburst · gpt-6.2-sol</span>
             </div>
 
             <div className="mt-10">
